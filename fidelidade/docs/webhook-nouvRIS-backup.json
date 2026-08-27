@@ -1,0 +1,15 @@
+{
+  "id": "cmmc7n5r7039olj4lb1i6ypyi",
+  "url": "https://nouva-felipe.mq8r4y.easypanel.host/webhook/whatsapp",
+  "headers": null,
+  "enabled": true,
+  "events": [
+    "MESSAGES_UPSERT",
+    "CONNECTION_UPDATE"
+  ],
+  "webhookByEvents": false,
+  "webhookBase64": true,
+  "createdAt": "2026-03-04T15:47:33.475Z",
+  "updatedAt": "2026-06-12T20:35:53.747Z",
+  "instanceId": "45731e30-1414-4b97-abef-8bae2b94bef5"
+}

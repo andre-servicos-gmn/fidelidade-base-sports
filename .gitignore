@@ -1,0 +1,27 @@
+# ============================ SEGREDOS ============================ #
+# NUNCA commitar. O .env carrega senha do banco, token da TouchPay,
+# chave da Evolution, CPF_PEPPER e JWT_SECRET.
+.env
+.env.*
+!.env.example
+
+# ============================= Python ============================= #
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ============================== Node ============================== #
+node_modules/
+dist/
+*.tsbuildinfo
+
+# =========================== Editor / SO ========================== #
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

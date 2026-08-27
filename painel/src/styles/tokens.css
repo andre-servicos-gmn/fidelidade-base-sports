@@ -1,0 +1,64 @@
+/* ========================================================================== *
+ *  TOKENS DA MARCA — Base Sports
+ *  --------------------------------------------------------------------------
+ *  ESTE É O ÚNICO ARQUIVO A EDITAR para trocar as cores da marca.
+ *  Quando a Base Sports passar os hex exatos, troque os valores abaixo:
+ *    --brand-green-*  -> verde primário (ações, sucesso, ativo)
+ *    --brand-pink-*   -> rosa escuro (acento, alertas, destaque de atenção)
+ *  Os demais arquivos só consomem estas variáveis, nunca hex direto.
+ * ========================================================================== */
+
+:root {
+  /* --- Cores da marca (TROCAR AQUI) ------------------------------------- */
+  --brand-green: #00a35a; /* verde esportivo vivo (primária) */
+  --brand-green-hover: #008a4c;
+  --brand-green-soft: #e6f6ee; /* fundo suave para estados de sucesso/ativo */
+  --brand-green-border: #b9e6cd;
+
+  --brand-pink: #b11e5e; /* rosa escuro (acento secundário / atenção) */
+  --brand-pink-hover: #97184f;
+  --brand-pink-soft: #fbe9f1;
+  --brand-pink-border: #f0c2d6;
+
+  /* --- Neutros --------------------------------------------------------- */
+  --color-bg: #f6f7f9; /* fundo da aplicação (cinza muito claro) */
+  --color-surface: #ffffff; /* cards / superfícies */
+  --color-surface-alt: #fbfcfd; /* listras de tabela / áreas sutis */
+  --color-border: #e4e7eb;
+  --color-border-strong: #d4d9df;
+
+  --color-text: #1a1f24; /* texto principal */
+  --color-text-muted: #66707a; /* texto secundário */
+  --color-text-subtle: #97a0a9; /* legendas, placeholders */
+
+  /* --- Semânticos ------------------------------------------------------ */
+  --color-primary: var(--brand-green);
+  --color-primary-hover: var(--brand-green-hover);
+  --color-accent: var(--brand-pink);
+
+  --color-danger: #c0392b;
+  --color-danger-soft: #fdecea;
+  --color-warning: #b9770e;
+  --color-warning-soft: #fdf3e3;
+
+  /* --- Tipografia ------------------------------------------------------ */
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial,
+    sans-serif;
+
+  /* --- Forma / espaço -------------------------------------------------- */
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04),
+    0 1px 3px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+}
