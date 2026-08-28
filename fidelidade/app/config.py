@@ -42,6 +42,25 @@ class Settings(BaseSettings):
     # Quando true, usa o MockMessageSender (não envia nada de verdade).
     use_mock_whatsapp: bool = True
 
+    # --- WhatsApp Cloud API (Meta) ---
+    # Convivem com a Evolution de propósito: dá para cadastrar e testar a Meta
+    # com o canal atual no ar, e voltar atrás sem downtime.
+    #
+    # Token que NÓS inventamos. A Meta o devolve no GET de verificação da URL;
+    # se não bater, recusamos e ela não cadastra o webhook.
+    meta_verify_token: str = ""
+    # App Secret (painel da Meta > Configurações > Básico). Assina o corpo de
+    # cada evento em X-Hub-Signature-256. Sem ele, qualquer um forjaria eventos.
+    meta_app_secret: str = ""
+    # Token de acesso da Graph API (use um de System User; o da tela de setup
+    # expira em 24h) e o id do número de onde as mensagens saem.
+    meta_access_token: str = ""
+    meta_phone_number_id: str = ""
+    meta_graph_version: str = "v21.0"
+    # Quando true, o ENVIO passa a sair pela Cloud API em vez da Evolution.
+    # O recebimento é independente: os dois webhooks podem ficar ativos juntos.
+    use_meta_whatsapp: bool = False
+
     # --- Estado conversacional (SessionStore) ---
     # Connection string do Redis. Upstash/Redis Cloud usam TLS -> `rediss://`
     # (dois "s"). Vazia = sem Redis (usa o store em memória). Ex:

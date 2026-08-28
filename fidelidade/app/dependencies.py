@@ -89,9 +89,30 @@ async def close_redis_client() -> None:
 
 @lru_cache
 def get_message_sender() -> MessageSender:
+    """Escolhe por quem as mensagens SAEM: mock, Cloud API (Meta) ou Evolution.
+
+    Ordem de precedência, do mais seguro ao mais real:
+      1. `use_mock_whatsapp=true`  -> não envia nada (dev e testes).
+      2. `use_meta_whatsapp=true`  -> Cloud API oficial da Meta.
+      3. caso contrário            -> Evolution (Baileys).
+
+    O RECEBIMENTO é independente disto: os webhooks da Evolution e da Meta têm
+    caminhos próprios e podem ficar ativos ao mesmo tempo. Assim dá para migrar
+    o envio sem parar de receber, e voltar atrás trocando uma variável.
+    """
     settings = get_settings()
     if settings.use_mock_whatsapp:
         return MockMessageSender()
+
+    if settings.use_meta_whatsapp:
+        from app.whatsapp.meta.sender import MetaCloudSender
+
+        return MetaCloudSender(
+            access_token=settings.meta_access_token,
+            phone_number_id=settings.meta_phone_number_id,
+            graph_version=settings.meta_graph_version,
+        )
+
     return EvolutionSender(
         base_url=settings.evolution_base_url,
         api_key=settings.evolution_api_key,

@@ -17,6 +17,7 @@ from app.routes.admin.auth import router as admin_auth_router
 from app.routes.admin.coupons import router as admin_coupons_router
 from app.routes.admin.customers import router as admin_customers_router
 from app.routes.admin.rules import router as admin_rules_router
+from app.routes.meta_webhook import router as meta_router
 from app.routes.whatsapp_webhook import router as whatsapp_router
 
 
@@ -96,6 +97,8 @@ app.add_middleware(
 # O estado conversacional (session_store) é um singleton de processo, exposto
 # via `app.dependencies.get_session_store`. Ver docstring de dependencies.py.
 app.include_router(whatsapp_router)
+# Cloud API da Meta, em caminho próprio: convive com a Evolution.
+app.include_router(meta_router)
 app.include_router(admin_auth_router)
 app.include_router(admin_rules_router)
 app.include_router(admin_coupons_router)

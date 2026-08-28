@@ -1,0 +1,305 @@
+"""Testes do webhook da Cloud API (Meta): verificação, assinatura e payload.
+
+Puros: não tocam banco nem rede. O que se testa aqui é a FRONTEIRA — o que a
+Meta manda e o que devolvemos. A lógica de conversa tem testes próprios.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+from contextlib import asynccontextmanager
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.config import get_settings
+from app.dependencies import (
+    get_message_sender,
+    get_session_factory,
+    get_session_store,
+)
+from app.main import app
+from app.whatsapp.evolution.sender import MockMessageSender
+from app.whatsapp.meta.phone import canonical_to_meta, meta_to_canonical
+from app.whatsapp.meta.signature import verify_signature
+from app.whatsapp.meta.webhook_schema import MetaWebhook
+from app.whatsapp.session_store import InMemorySessionStore
+
+VERIFY_TOKEN = "token-de-verificacao-de-teste"
+APP_SECRET = "segredo-do-app-de-teste"
+PATH = "/webhook/meta"
+
+
+@pytest.fixture(autouse=True)
+def _settings(monkeypatch):
+    """Aponta a config para valores de teste e limpa o cache do get_settings."""
+    monkeypatch.setenv("META_VERIFY_TOKEN", VERIFY_TOKEN)
+    monkeypatch.setenv("META_APP_SECRET", APP_SECRET)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def _sign(body: bytes, secret: str = APP_SECRET) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def _text_payload(text: str = "oi", frm: str = "5511987654321") -> dict:
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "1",
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "contacts": [{"profile": {"name": "Andre"}}],
+                            "messages": [
+                                {
+                                    "from": frm,
+                                    "id": "wamid.TEST",
+                                    "timestamp": "1",
+                                    "type": "text",
+                                    "text": {"body": text},
+                                }
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+
+@pytest.fixture
+def client():
+    """App com store em memória e sender mock (não envia nada de verdade)."""
+    store = InMemorySessionStore()
+    sender = MockMessageSender()
+
+    class _FakeResult:
+        def scalar_one_or_none(self):
+            return None
+
+        def scalars(self):
+            return self
+
+        def first(self):
+            return None
+
+    class _FakeSession:
+        async def execute(self, *_a, **_k):
+            return _FakeResult()
+
+        async def commit(self):
+            pass
+
+        async def rollback(self):
+            pass
+
+    @asynccontextmanager
+    async def _fake_session():
+        yield _FakeSession()
+
+    app.dependency_overrides[get_session_store] = lambda: store
+    app.dependency_overrides[get_message_sender] = lambda: sender
+    app.dependency_overrides[get_session_factory] = lambda: _fake_session
+    with TestClient(app) as c:
+        c.sender = sender  # type: ignore[attr-defined]
+        yield c
+    app.dependency_overrides.clear()
+
+
+# --------------------------------------------------------------------------- #
+# Verificação da URL (o GET que a Meta faz ao cadastrar)                       #
+# --------------------------------------------------------------------------- #
+def test_verification_returns_the_challenge_as_plain_text(client):
+    r = client.get(
+        PATH,
+        params={
+            "hub.mode": "subscribe",
+            "hub.verify_token": VERIFY_TOKEN,
+            "hub.challenge": "1158201444",
+        },
+    )
+    assert r.status_code == 200
+    # TEXTO PURO: se devolver JSON (com aspas), a Meta recusa a URL.
+    assert r.text == "1158201444"
+
+
+def test_verification_rejects_wrong_token(client):
+    r = client.get(
+        PATH,
+        params={
+            "hub.mode": "subscribe",
+            "hub.verify_token": "token-errado",
+            "hub.challenge": "123",
+        },
+    )
+    assert r.status_code == 403
+
+
+def test_verification_rejects_when_token_not_configured(client, monkeypatch):
+    """Fail-closed: sem token configurado, ninguém cadastra a URL."""
+    monkeypatch.setenv("META_VERIFY_TOKEN", "")
+    get_settings.cache_clear()
+    r = client.get(
+        PATH,
+        params={
+            "hub.mode": "subscribe",
+            "hub.verify_token": "",
+            "hub.challenge": "123",
+        },
+    )
+    assert r.status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# Assinatura                                                                   #
+# --------------------------------------------------------------------------- #
+def test_signature_helper_accepts_valid_and_rejects_tampered():
+    body = b'{"a":1}'
+    assert verify_signature(APP_SECRET, body, _sign(body)) is True
+    # Corpo alterado com a mesma assinatura -> recusa.
+    assert verify_signature(APP_SECRET, b'{"a":2}', _sign(body)) is False
+    # Sem header, sem segredo, ou prefixo errado -> recusa.
+    assert verify_signature(APP_SECRET, body, None) is False
+    assert verify_signature("", body, _sign(body)) is False
+    assert verify_signature(APP_SECRET, body, "sha1=abc") is False
+
+
+def test_post_without_signature_is_rejected(client):
+    r = client.post(PATH, json=_text_payload())
+    assert r.status_code == 401
+
+
+def test_post_with_wrong_signature_is_rejected(client):
+    raw = json.dumps(_text_payload()).encode()
+    r = client.post(
+        PATH,
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": _sign(raw, "outro-segredo"),
+        },
+    )
+    assert r.status_code == 401
+
+
+def test_post_with_valid_signature_is_processed(client):
+    raw = json.dumps(_text_payload("oi")).encode()
+    r = client.post(
+        PATH,
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": _sign(raw),
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert body["replies"] >= 1
+    # Respondeu para o número canônico (sem o 55).
+    assert client.sender.sent[0][0] == "11987654321"
+
+
+def test_status_events_are_ignored(client):
+    """Entregue/lido não é mensagem: 200 sem responder nada ao cliente."""
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {"statuses": [{"status": "delivered"}]},
+                    }
+                ]
+            }
+        ],
+    }
+    raw = json.dumps(payload).encode()
+    r = client.post(
+        PATH,
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": _sign(raw),
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "ignored"
+    assert client.sender.sent == []
+
+
+# --------------------------------------------------------------------------- #
+# Extração de payload e telefone                                               #
+# --------------------------------------------------------------------------- #
+def test_button_reply_becomes_the_button_title():
+    """Na API oficial os botões funcionam; a resposta chega como interactive."""
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "5511987654321",
+                                    "id": "w",
+                                    "type": "interactive",
+                                    "interactive": {
+                                        "type": "button_reply",
+                                        "button_reply": {
+                                            "id": "2",
+                                            "title": "Resgatar pontos",
+                                        },
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    msg = MetaWebhook(**payload).extract_text_message()
+    assert msg is not None
+    assert msg.text == "Resgatar pontos"
+
+
+def test_media_message_is_ignored():
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "5511987654321",
+                                    "id": "w",
+                                    "type": "image",
+                                    "image": {"id": "123"},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    assert MetaWebhook(**payload).extract_text_message() is None
+
+
+def test_phone_translation_roundtrip():
+    assert meta_to_canonical("5511987654321") == "11987654321"
+    assert canonical_to_meta("11987654321") == "5511987654321"
+    # Idempotente nos dois sentidos.
+    assert canonical_to_meta("5511987654321") == "5511987654321"
+    assert meta_to_canonical("11987654321") == "11987654321"
