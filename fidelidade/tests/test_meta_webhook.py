@@ -303,3 +303,115 @@ def test_phone_translation_roundtrip():
     # Idempotente nos dois sentidos.
     assert canonical_to_meta("5511987654321") == "5511987654321"
     assert meta_to_canonical("11987654321") == "11987654321"
+
+
+# --------------------------------------------------------------------------- #
+# Regressões encontradas na revisão de código                                  #
+# --------------------------------------------------------------------------- #
+def test_signature_with_non_ascii_header_is_rejected_not_crashed():
+    """Header forjado com byte não-ASCII deve RECUSAR, não estourar.
+
+    Cabeçalhos HTTP decodificam como latin-1, e `compare_digest` sobre duas
+    str levanta TypeError com caractere não-ASCII. Comparando em str, uma
+    assinatura forjada com um byte alto virava HTTP 500 em vez de 401 — um
+    atacante derrubava a requisição de propósito.
+    """
+    forjada = "sha256=" + chr(0xE9) * 64
+    assert verify_signature(APP_SECRET, b"{}", forjada) is False
+
+
+def test_forged_non_ascii_signature_returns_401(client):
+    """Mesmo ataque, agora atravessando o HTTP de verdade.
+
+    O header vai como BYTES porque é assim que ele chega pela rede — o cliente
+    httpx recusaria uma str não-ASCII, mas o atacante não usa httpx. O Starlette
+    decodifica esses bytes como latin-1, que era exatamente o caminho até o
+    TypeError.
+    """
+    raw = json.dumps(_text_payload()).encode()
+    r = client.post(
+        PATH,
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            # 0xE9 = 'é' em latin-1: byte válido no header, inválido em ASCII.
+            "X-Hub-Signature-256": b"sha256=" + bytes([0xE9]) * 64,
+        },
+    )
+    assert r.status_code == 401
+
+
+def test_batched_payload_answers_every_message(client):
+    """A Meta agrupa eventos: um POST pode trazer várias mensagens.
+
+    Atender só a primeira e responder 200 descarta as demais — a Meta considera
+    o lote entregue e nunca reenvia. O cliente fica sem resposta, sem erro.
+    """
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "1",
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "messages": [
+                                {
+                                    "from": "5511900000001",
+                                    "id": "w1",
+                                    "type": "text",
+                                    "text": {"body": "oi"},
+                                },
+                                {
+                                    "from": "5511900000002",
+                                    "id": "w2",
+                                    "type": "text",
+                                    "text": {"body": "oi"},
+                                },
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+    raw = json.dumps(payload).encode()
+    r = client.post(
+        PATH,
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": _sign(raw),
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["messages"] == 2
+
+    # Os DOIS clientes foram respondidos.
+    destinos = {destino for destino, _ in client.sender.sent}
+    assert destinos == {"11900000001", "11900000002"}
+
+
+def test_meta_sender_requires_token_and_phone_id(monkeypatch):
+    """Config pela metade tem que quebrar na subida, não silenciosamente.
+
+    Sem token/phone_number_id a URL sai como '.../v21.0//messages' e todo envio
+    falha; como o webhook engole exceção de envio, a resposta seria
+    {"status":"ok","sent":0} — saudável na aparência, mudo na prática.
+    """
+    from app.dependencies import get_message_sender
+
+    monkeypatch.setenv("USE_MOCK_WHATSAPP", "false")
+    monkeypatch.setenv("USE_META_WHATSAPP", "true")
+    monkeypatch.setenv("META_ACCESS_TOKEN", "")
+    monkeypatch.setenv("META_PHONE_NUMBER_ID", "")
+    get_settings.cache_clear()
+    get_message_sender.cache_clear()
+
+    with pytest.raises(RuntimeError, match="META_ACCESS_TOKEN"):
+        get_message_sender()
+
+    get_message_sender.cache_clear()
+    get_settings.cache_clear()

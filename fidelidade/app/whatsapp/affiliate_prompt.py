@@ -13,6 +13,7 @@ cliente case com o estado gravado aqui.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -24,6 +25,8 @@ from app.whatsapp.session_store import (
     ConversationStep,
     SessionStore,
 )
+
+logger = logging.getLogger("fidelidade.affiliate_prompt")
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,21 @@ async def dispatch_affiliate_prompts(
                 },
             ),
         )
-        await sender.send_text(phone_n, messages.ask_affiliate_code(prompt.points))
-        sent += 1
+        try:
+            await sender.send_text(
+                phone_n, messages.ask_affiliate_code(prompt.points)
+            )
+            sent += 1
+        except Exception:  # noqa: BLE001 — ver comentário abaixo
+            # Uma falha de envio NÃO pode abortar o lote. Sem este try, o
+            # primeiro erro (número inexistente, instabilidade, ou — na Cloud
+            # API — a recusa por mensagem fora da janela de 24h) interromperia
+            # o for e os demais clientes nunca receberiam a pergunta. E, como a
+            # compra já foi creditada e o ledger é idempotente, esse prompt
+            # nunca mais seria gerado: perda silenciosa e definitiva.
+            logger.exception(
+                "falha ao enviar pergunta de afiliado para %s; seguindo com o "
+                "restante do lote",
+                phone_n,
+            )
     return sent

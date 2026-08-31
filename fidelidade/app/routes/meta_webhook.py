@@ -88,30 +88,51 @@ async def receive_webhook(
         logger.exception("payload da Meta ilegível; ignorando")
         return {"status": "ignored"}
 
-    incoming = payload.extract_text_message()
-    if incoming is None:
+    # A Meta AGRUPA eventos: um POST pode trazer várias mensagens, de clientes
+    # diferentes. Todas precisam ser atendidas — o 200 faz ela considerar o
+    # lote inteiro entregue, sem reenvio.
+    incoming = payload.extract_text_messages()
+    if not incoming:
         # Status de entrega, mídia, reação: nada a fazer.
         return {"status": "ignored"}
 
-    phone_canonical = meta_to_canonical(incoming.from_number)
-    if not phone_canonical:
-        return {"status": "ignored"}
-
-    replies = await handle_message(
-        phone_canonical, incoming.text, store, session_factory
-    )
-
-    # Falha de ENVIO não pode virar 500: a Meta reentregaria o evento e o
-    # cliente receberia tudo duas vezes. Mesma política do webhook da Evolution.
+    replies_total = 0
     sent = 0
-    for reply in replies:
+    for mensagem in incoming:
+        phone_canonical = meta_to_canonical(mensagem.from_number)
+        if not phone_canonical:
+            continue
+
         try:
-            await sender.send_text(phone_canonical, reply)
-            sent += 1
-        except Exception:  # noqa: BLE001 — ver comentário acima
+            replies = await handle_message(
+                phone_canonical, mensagem.text, store, session_factory
+            )
+        except Exception:  # noqa: BLE001 — uma conversa ruim não mata o lote
             logger.exception(
-                "falha ao enviar resposta para %s; seguindo sem derrubar o webhook",
+                "falha ao processar mensagem de %s; seguindo com o lote",
                 phone_canonical,
             )
+            continue
 
-    return {"status": "ok", "replies": len(replies), "sent": sent}
+        replies_total += len(replies)
+
+        # Falha de ENVIO não pode virar 500: a Meta reentregaria o evento e o
+        # cliente receberia tudo duas vezes. Mesma política do webhook da
+        # Evolution.
+        for reply in replies:
+            try:
+                await sender.send_text(phone_canonical, reply)
+                sent += 1
+            except Exception:  # noqa: BLE001 — ver comentário acima
+                logger.exception(
+                    "falha ao enviar resposta para %s; seguindo sem derrubar "
+                    "o webhook",
+                    phone_canonical,
+                )
+
+    return {
+        "status": "ok",
+        "messages": len(incoming),
+        "replies": replies_total,
+        "sent": sent,
+    }

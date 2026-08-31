@@ -36,4 +36,13 @@ def verify_signature(app_secret: str, raw_body: bytes, header: str | None) -> bo
     esperado = hmac.new(
         app_secret.encode("utf-8"), raw_body, hashlib.sha256
     ).hexdigest()
-    return hmac.compare_digest(esperado, header[len(_PREFIX):])
+    recebido = header[len(_PREFIX):]
+
+    # Comparar em BYTES, não em str. `compare_digest` com duas strings levanta
+    # TypeError se qualquer uma tiver caractere não-ASCII — e o header vem do
+    # atacante (cabeçalhos HTTP decodificam como latin-1). Com str, uma
+    # assinatura forjada com um byte alto derruba a requisição em 500 em vez de
+    # recusar com 401. Em bytes, a comparação é sempre segura.
+    return hmac.compare_digest(
+        esperado.encode("ascii"), recebido.encode("latin-1", "replace")
+    )

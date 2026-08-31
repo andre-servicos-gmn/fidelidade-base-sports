@@ -107,6 +107,24 @@ def get_message_sender() -> MessageSender:
     if settings.use_meta_whatsapp:
         from app.whatsapp.meta.sender import MetaCloudSender
 
+        # FAIL-FAST: sem token ou sem phone_number_id, a URL da Graph API sai
+        # malformada (".../v21.0//messages") e TODO envio falha. Como o webhook
+        # engole exceção de envio para não devolver 500, a falha ficaria
+        # invisível: resposta {"status":"ok","sent":0} e cliente sem mensagem.
+        # Melhor quebrar na subida, onde alguém vê.
+        faltando = [
+            nome
+            for nome, valor in (
+                ("META_ACCESS_TOKEN", settings.meta_access_token),
+                ("META_PHONE_NUMBER_ID", settings.meta_phone_number_id),
+            )
+            if not valor
+        ]
+        if faltando:
+            raise RuntimeError(
+                "USE_META_WHATSAPP=true exige " + " e ".join(faltando) + "."
+            )
+
         return MetaCloudSender(
             access_token=settings.meta_access_token,
             phone_number_id=settings.meta_phone_number_id,

@@ -123,12 +123,18 @@ class MetaWebhook(BaseModel):
     object: str | None = None
     entry: list[MetaEntry] | None = None
 
-    def extract_text_message(self) -> IncomingTextMessage | None:
-        """Primeira mensagem de texto/botão do payload, ou None.
+    def extract_text_messages(self) -> list[IncomingTextMessage]:
+        """TODAS as mensagens de texto/botão do payload, na ordem.
 
-        Devolve None para eventos de status (entregue/lido) e para tipos de
-        mídia que não tratamos — o webhook responde 200 e segue.
+        A Meta AGRUPA eventos: um único POST pode trazer várias mensagens, de
+        clientes diferentes. Processar só a primeira e responder 200 descarta
+        as demais silenciosamente — a Meta considera entregue e nunca reenvia.
+        Cliente fica sem resposta e não há erro em lugar nenhum.
+
+        Eventos de status (entregue/lido) e mídias que não tratamos não entram
+        na lista; o webhook responde 200 e segue.
         """
+        encontradas: list[IncomingTextMessage] = []
         for entry in self.entry or []:
             for change in entry.changes or []:
                 value = change.value
@@ -142,10 +148,17 @@ class MetaWebhook(BaseModel):
                 for message in value.messages:
                     texto = message.resolved_text()
                     if texto and message.from_:
-                        return IncomingTextMessage(
-                            from_number=message.from_,
-                            text=texto,
-                            contact_name=nome,
-                            message_id=message.id,
+                        encontradas.append(
+                            IncomingTextMessage(
+                                from_number=message.from_,
+                                text=texto,
+                                contact_name=nome,
+                                message_id=message.id,
+                            )
                         )
-        return None
+        return encontradas
+
+    def extract_text_message(self) -> IncomingTextMessage | None:
+        """Primeira mensagem do payload, ou None. Conveniência para testes."""
+        mensagens = self.extract_text_messages()
+        return mensagens[0] if mensagens else None
