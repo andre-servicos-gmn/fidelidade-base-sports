@@ -26,6 +26,9 @@ from app.whatsapp.meta.phone import canonical_to_meta
 class MetaCloudSender(MessageSender):
     """Envio via Graph API. Mesmo contrato do EvolutionSender."""
 
+    # Único provedor capaz de INICIAR conversa fora da janela de 24h.
+    supports_templates = True
+
     def __init__(
         self,
         access_token: str,

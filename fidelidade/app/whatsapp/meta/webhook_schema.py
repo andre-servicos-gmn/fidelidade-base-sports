@@ -11,9 +11,12 @@ por um campo novo que nem usamos.
 
 Tipos de mensagem tratados:
 - `text`        -> `text.body`
-- `interactive` -> resposta de botão ou de lista. Aqui vem a graça da API
-  oficial: botões funcionam de verdade. Usamos o TÍTULO do botão como texto,
-  porque a máquina de conversa já entende "1"/"2"/"Consultar saldo".
+- `interactive` -> resposta de botão ou de lista de uma mensagem INTERATIVA
+  (só dentro da janela de 24h). Usamos o TÍTULO do botão como texto, porque a
+  máquina de conversa já entende "1"/"2"/"Consultar saldo".
+- `button`      -> resposta de botão de TEMPLATE. Formato distinto do de cima
+  (ver `MetaButton`); é o que chega quando o cliente responde à pergunta de
+  afiliado pós-compra.
 
 Qualquer outra coisa (áudio, imagem, status, reação) devolve None e o webhook
 ignora sem erro.
@@ -67,12 +70,39 @@ class MetaInteractive(BaseModel):
         return None
 
 
+class MetaButton(BaseModel):
+    """Clique em botão de TEMPLATE — formato DIFERENTE do botão interativo.
+
+    Botão de mensagem interativa chega aninhado em `interactive.button_reply`.
+    Botão de template chega num campo `button` de primeiro nível:
+
+        {"type": "button", "button": {"text": "Sim", "payload": "SIM"}}
+
+    Sem este ramo o clique cai no `resolved_text() -> None` e o webhook o
+    descarta em silêncio: o cliente toca no botão e nada acontece, sem erro em
+    lugar nenhum. É exatamente o caso da pergunta de afiliado pós-compra, que
+    só pode sair como template (janela de 24h fechada).
+    """
+
+    model_config = _TOLERANT
+    text: str | None = None
+    payload: str | None = None
+
+    def resolved_text(self) -> str | None:
+        """Texto equivalente ao que o cliente 'digitou' ao tocar no botão."""
+        # `text` é o RÓTULO VISÍVEL, que é o que a máquina de conversa
+        # reconhece ("Sim, tenho o código" / "Não"). O `payload` (definido na
+        # criação do template) é a reserva, caso a Meta omita o rótulo.
+        return self.text or self.payload or None
+
+
 class MetaMessage(BaseModel):
     model_config = _TOLERANT
     id: str | None = None
     type: str | None = None
     text: MetaText | None = None
     interactive: MetaInteractive | None = None
+    button: MetaButton | None = None
     # Campo "from" é palavra reservada em Python; o alias resolve.
     from_: str | None = None
 
@@ -86,6 +116,8 @@ class MetaMessage(BaseModel):
             return self.text.body
         if self.interactive is not None:
             return self.interactive.resolved_text()
+        if self.button is not None:
+            return self.button.resolved_text()
         return None
 
 

@@ -141,6 +141,19 @@ _AFFILIATE_SKIP_CMDS = {
     "pular",
 }
 
+# Respostas afirmativas à pergunta de afiliado. O clique num botão do template
+# chega como o RÓTULO do botão, então estes valores precisam bater com o texto
+# aprovado na Meta — mudou o rótulo lá, mude aqui. As formas secas ("sim"/"s")
+# cobrem quem responde digitando, na Evolution ou já dentro da janela de 24h.
+_AFFILIATE_YES_CMDS = {
+    "sim",
+    "s",
+    "sim, tenho o código",
+    "sim, tenho o codigo",
+    "tenho o código",
+    "tenho o codigo",
+}
+
 
 async def handle_message(
     phone: str,
@@ -352,6 +365,25 @@ async def _handle_affiliate_code(
     if cmd in _AFFILIATE_SKIP_CMDS:
         await store.delete(phone_n)
         return [messages.affiliate_skipped()]
+
+    # Botão "Sim": o clique NÃO é um código — é o cliente dizendo que TEM um.
+    # Sem este ramo, "Sim" seguiria para `get_active_affiliate_by_code`, não
+    # acharia nada e o cliente levaria "código não encontrado" por ter clicado
+    # no botão certo. Pergunta o código e MANTÉM o passo.
+    #
+    # `code_requested` limita a interpretação ao primeiro turno: depois de
+    # pedirmos o código, um "sim" seguinte volta a ser tratado como código —
+    # protege o caso (improvável, mas possível) de um afiliado cujo código
+    # seja literalmente "sim".
+    if not state.data.get("code_requested") and cmd in _AFFILIATE_YES_CMDS:
+        await store.set(
+            phone_n,
+            ConversationState(
+                step=ConversationStep.AWAITING_AFFILIATE_CODE,
+                data={**state.data, "code_requested": True},
+            ),
+        )
+        return [messages.ask_affiliate_code_after_yes()]
 
     source_reference = state.data.get("source_reference")
     points = int(state.data.get("points", 0))

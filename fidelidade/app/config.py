@@ -56,10 +56,23 @@ class Settings(BaseSettings):
     # expira em 24h) e o id do número de onde as mensagens saem.
     meta_access_token: str = ""
     meta_phone_number_id: str = ""
+    # Segredo embutido no CAMINHO do webhook, para quando o App Secret ainda
+    # não está disponível. A Meta só chama uma URL (não manda header
+    # customizado), então o caminho é o único segredo que dá para exigir dela.
+    # Vazio = só o HMAC protege. Os dois preenchidos = os dois valem.
+    meta_webhook_path_secret: str = ""
     meta_graph_version: str = "v21.0"
     # Quando true, o ENVIO passa a sair pela Cloud API em vez da Evolution.
     # O recebimento é independente: os dois webhooks podem ficar ativos juntos.
     use_meta_whatsapp: bool = False
+    # Nome do template aprovado da pergunta de afiliado pós-compra — a ÚNICA
+    # mensagem que o sistema envia sem o cliente ter escrito antes. Todo o
+    # resto é resposta dentro da janela de 24h e sai como texto livre.
+    # Vazio = cai para texto livre, que a Meta RECUSA com o erro 131047 fora
+    # da janela (ver o aviso em `affiliate_prompt._send_prompt`).
+    meta_affiliate_template: str = ""
+    # Código de idioma do template, exatamente como cadastrado na Meta.
+    meta_template_language: str = "pt_BR"
 
     # --- Estado conversacional (SessionStore) ---
     # Connection string do Redis. Upstash/Redis Cloud usam TLS -> `rediss://`

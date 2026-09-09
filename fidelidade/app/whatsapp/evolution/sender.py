@@ -14,12 +14,35 @@ from app.whatsapp.evolution.phone import canonical_to_evolution
 
 
 class MessageSender(ABC):
-    """Contrato de envio de mensagem de texto para um telefone canônico."""
+    """Contrato de envio de mensagem para um telefone canônico.
+
+    `send_text` é o mínimo que todo provedor implementa. `send_template` só
+    existe na Cloud API oficial — por isso NÃO é abstrato: obrigar a Evolution
+    e o mock a implementá-lo só produziria stubs inúteis. Quem precisa iniciar
+    conversa (fora da janela de 24h da Meta) consulta `supports_templates`
+    antes de chamar, em vez de tentar e tratar exceção.
+    """
+
+    # Sobrescrito para True apenas pelo MetaCloudSender.
+    supports_templates: bool = False
 
     @abstractmethod
     async def send_text(self, phone_canonical: str, text: str) -> None:
         """Envia `text` para o telefone (no formato canônico da Fase 5)."""
         ...
+
+    async def send_template(
+        self,
+        phone_canonical: str,
+        template_name: str,
+        language: str = "pt_BR",
+        body_params: list[str] | None = None,
+    ) -> None:
+        """Envia um template aprovado. Só a Cloud API (Meta) implementa."""
+        raise NotImplementedError(
+            f"{type(self).__name__} não envia template (só a Cloud API da "
+            "Meta envia). Cheque `supports_templates` antes de chamar."
+        )
 
 
 class EvolutionSender(MessageSender):

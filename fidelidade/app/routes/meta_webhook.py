@@ -12,6 +12,7 @@ tradução de fronteira.
 
 from __future__ import annotations
 
+import hmac
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -37,8 +38,53 @@ router = APIRouter()
 SIGNATURE_HEADER = "X-Hub-Signature-256"
 
 
+def _check_path_secret(path_secret: str | None) -> None:
+    """Confere o segredo embutido na URL, quando há um configurado.
+
+    Existe porque o App Secret pode não estar disponível (ver o README): a Meta
+    só chama uma URL, sem header customizado, então o único segredo que dá para
+    exigir dela é o próprio caminho. É a MESMA proteção do webhook da Evolution
+    que já roda em produção (segredo compartilhado), não um nível abaixo dela.
+
+    Mais fraco que o HMAC, e por um motivo concreto: um segredo na URL aparece
+    em log de acesso, log de proxy e captura de erro, onde uma assinatura nunca
+    apareceria. É ponte, não destino — com `META_APP_SECRET` preenchido, o HMAC
+    passa a valer junto (ver `_authorize`).
+
+    Responde 404, não 403: para quem erra o caminho, o endpoint simplesmente
+    não existe.
+    """
+    esperado = get_settings().meta_webhook_path_secret
+    if not esperado:
+        return
+
+    # compare_digest: comparação em tempo constante. `==` sai no primeiro byte
+    # diferente, e esse tempo vaza o segredo caractere a caractere.
+    if not path_secret or not hmac.compare_digest(path_secret, esperado):
+        logger.warning("webhook da Meta recusado: segredo de caminho inválido")
+        raise HTTPException(status_code=404, detail="not found")
+
+
+def _require_some_guard() -> None:
+    """FAIL-CLOSED: sem App Secret E sem segredo de caminho, recusa tudo.
+
+    Sem esta trava, esquecer as duas configurações deixaria o endpoint aberto —
+    e quem descobrisse a URL poderia forjar mensagens, resgatando cupons e
+    atribuindo comissão de afiliado em nome de clientes reais.
+    """
+    settings = get_settings()
+    if not settings.meta_app_secret and not settings.meta_webhook_path_secret:
+        logger.error(
+            "webhook da Meta sem proteção: configure META_APP_SECRET "
+            "(preferido) ou META_WEBHOOK_PATH_SECRET."
+        )
+        raise HTTPException(status_code=403, detail="webhook not configured")
+
+
 @router.get("/webhook/meta", response_class=PlainTextResponse)
+@router.get("/webhook/meta/{path_secret}", response_class=PlainTextResponse)
 async def verify_webhook(
+    path_secret: str | None = None,
     hub_mode: str | None = Query(default=None, alias="hub.mode"),
     hub_verify_token: str | None = Query(default=None, alias="hub.verify_token"),
     hub_challenge: str | None = Query(default=None, alias="hub.challenge"),
@@ -49,9 +95,15 @@ async def verify_webhook(
     TEXTO PURO com 200, ela aceita a URL; qualquer outra coisa (405, JSON,
     corpo diferente) e o cadastro é recusado.
 
+    O GET não vem assinado — a Meta só assina os POSTs. Então aqui a defesa é o
+    segredo do caminho (quando houver) mais o verify token.
+
     FAIL-CLOSED: com `META_VERIFY_TOKEN` vazio, recusa. Assim uma configuração
     esquecida não vira uma URL que qualquer um consegue registrar.
     """
+    _require_some_guard()
+    _check_path_secret(path_secret)
+
     settings = get_settings()
     esperado = settings.meta_verify_token
 
@@ -63,8 +115,10 @@ async def verify_webhook(
 
 
 @router.post("/webhook/meta")
+@router.post("/webhook/meta/{path_secret}")
 async def receive_webhook(
     request: Request,
+    path_secret: str | None = None,
     sender: MessageSender = Depends(get_message_sender),
     store: SessionStore = Depends(get_session_store),
     session_factory=Depends(get_session_factory),
@@ -74,10 +128,17 @@ async def receive_webhook(
     A assinatura é conferida sobre o CORPO CRU, antes de qualquer parsing — é o
     único jeito de o HMAC bater (ver `signature.py`).
     """
+    _require_some_guard()
+    _check_path_secret(path_secret)
+
     settings = get_settings()
     raw = await request.body()
 
-    if not verify_signature(
+    # DEGRAU AUTOMÁTICO: com App Secret configurado, o HMAC vale SEMPRE — mesmo
+    # que o segredo de caminho também esteja ativo (os dois somam, não se
+    # substituem). Colar o segredo no `.env` liga a proteção forte sozinho, sem
+    # editar código e sem depender de alguém lembrar de reverter a ponte.
+    if settings.meta_app_secret and not verify_signature(
         settings.meta_app_secret, raw, request.headers.get(SIGNATURE_HEADER)
     ):
         raise HTTPException(status_code=401, detail="invalid signature")

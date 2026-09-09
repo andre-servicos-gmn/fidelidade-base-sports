@@ -37,6 +37,10 @@ def _settings(monkeypatch):
     """Aponta a config para valores de teste e limpa o cache do get_settings."""
     monkeypatch.setenv("META_VERIFY_TOKEN", VERIFY_TOKEN)
     monkeypatch.setenv("META_APP_SECRET", APP_SECRET)
+    # Este arquivo cobre a postura SÓ-HMAC, no caminho nu /webhook/meta. Sem
+    # zerar isto, um segredo de caminho no `.env` do desenvolvedor vazaria para
+    # cá (o Settings lê o .env) e todo teste daqui viraria 404.
+    monkeypatch.setenv("META_WEBHOOK_PATH_SECRET", "")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

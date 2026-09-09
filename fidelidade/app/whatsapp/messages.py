@@ -390,6 +390,19 @@ def ask_affiliate_code(points: int) -> str:
     )
 
 
+def ask_affiliate_code_after_yes() -> str:
+    """Segundo turno: o cliente clicou "Sim" e agora informa o código.
+
+    Só existe por causa dos botões do template: no fluxo por texto o cliente
+    manda o código de uma vez (ver `ask_affiliate_code`); tocando no botão ele
+    apenas disse que TEM um código, e ainda precisa dizer qual.
+    """
+    return (
+        "Ótimo! Qual é o *código* do professor ou influencer?\n\n"
+        "Se preferir não informar, responda *não*."
+    )
+
+
 def affiliate_attributed(affiliate_name: str | None = None) -> str:
     de_quem = f" de *{affiliate_name}*" if affiliate_name else ""
     return (

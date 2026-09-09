@@ -451,6 +451,147 @@ async def test_affiliate_code_unknown_keeps_step(session, session_factory, store
 
 
 @pytest.mark.integration
+async def test_affiliate_yes_button_asks_for_code(session, session_factory, store):
+    """Clicar "Sim" pede o código em vez de tratar o rótulo como código.
+
+    Sem este ramo, "Sim" iria direto para a busca de afiliado, não acharia
+    nada e o cliente levaria "não encontrei esse código" por ter clicado no
+    botão certo — ficando preso no passo sem entender por quê.
+    """
+    customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
+    customer_id = customer.id
+    await _seed_affiliate(session)
+
+    await store.set(
+        normalize_phone(PHONE_A),
+        ConversationState(
+            step=ConversationStep.AWAITING_AFFILIATE_CODE,
+            data={
+                "source_reference": "WACONV-tx4",
+                "points": 90,
+                "amount": "150.00",
+            },
+        ),
+    )
+
+    out = await handle_message(
+        PHONE_A, "Sim, tenho o código", store, session_factory
+    )
+    assert len(out) == 1
+    assert "código" in out[0].lower()
+    assert "não encontrei" not in out[0].lower()
+
+    # Nada atribuído ainda; o passo continua, agora marcado como "já pedi".
+    assert await _attribution_count(session, customer_id) == 0
+    state = await store.get(normalize_phone(PHONE_A))
+    assert state is not None
+    assert state.step is ConversationStep.AWAITING_AFFILIATE_CODE
+    assert state.data["code_requested"] is True
+    # Os dados da compra sobrevivem ao turno extra — sem eles não há o que
+    # atribuir quando o código chegar.
+    assert state.data["source_reference"] == "WACONV-tx4"
+    assert state.data["points"] == 90
+    assert state.data["amount"] == "150.00"
+
+
+@pytest.mark.integration
+async def test_affiliate_yes_then_code_attributes_purchase(
+    session, session_factory, store
+):
+    """O fluxo completo de dois turnos: botão "Sim" -> código -> atribuição."""
+    customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
+    customer_id = customer.id
+    affiliate = await _seed_affiliate(session)
+    affiliate_id = affiliate.id
+
+    await store.set(
+        normalize_phone(PHONE_A),
+        ConversationState(
+            step=ConversationStep.AWAITING_AFFILIATE_CODE,
+            data={
+                "source_reference": "WACONV-tx5",
+                "points": 120,
+                "amount": "200.00",
+            },
+        ),
+    )
+
+    await handle_message(PHONE_A, "Sim, tenho o código", store, session_factory)
+    out = await handle_message(PHONE_A, AFF_CODE, store, session_factory)
+    assert any("indicação" in m.lower() for m in out)
+
+    attr = (
+        await session.execute(
+            select(AffiliateAttribution).where(
+                AffiliateAttribution.source_reference == "WACONV-tx5"
+            )
+        )
+    ).scalar_one()
+    assert attr.affiliate_id == affiliate_id
+    assert attr.customer_id == customer_id
+    assert attr.points == 120
+    assert attr.affiliate_points == 100  # floor(200 × 50%)
+    assert await store.get(normalize_phone(PHONE_A)) is None
+
+
+@pytest.mark.integration
+async def test_affiliate_no_button_skips(session, session_factory, store):
+    """O rótulo "Não" do botão cai no mesmo caminho do "não" digitado."""
+    customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
+    customer_id = customer.id
+    await _seed_affiliate(session)
+
+    await store.set(
+        normalize_phone(PHONE_A),
+        ConversationState(
+            step=ConversationStep.AWAITING_AFFILIATE_CODE,
+            data={"source_reference": "WACONV-tx6", "points": 50},
+        ),
+    )
+
+    out = await handle_message(PHONE_A, "Não", store, session_factory)
+    assert len(out) == 1
+    assert await _attribution_count(session, customer_id) == 0
+    assert await store.get(normalize_phone(PHONE_A)) is None
+
+
+@pytest.mark.integration
+async def test_affiliate_yes_after_code_requested_is_treated_as_code(
+    session, session_factory, store
+):
+    """Depois de pedirmos o código, "sim" volta a ser um código.
+
+    Protege o caso improvável de um afiliado cujo código seja literalmente
+    "sim": sem o `code_requested`, o cliente ficaria em laço, sempre ouvindo
+    "qual é o código?".
+    """
+    customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
+    customer_id = customer.id
+    await _seed_affiliate(session)
+
+    await store.set(
+        normalize_phone(PHONE_A),
+        ConversationState(
+            step=ConversationStep.AWAITING_AFFILIATE_CODE,
+            data={
+                "source_reference": "WACONV-tx7",
+                "points": 70,
+                "amount": "100.00",
+                "code_requested": True,
+            },
+        ),
+    )
+
+    out = await handle_message(PHONE_A, "sim", store, session_factory)
+    # Tratado como código (inexistente), não como novo "sim".
+    assert any("não encontrei" in m.lower() for m in out)
+    assert await _attribution_count(session, customer_id) == 0
+    state = await store.get(normalize_phone(PHONE_A))
+    assert state is not None
+    assert state.step is ConversationStep.AWAITING_AFFILIATE_CODE
+
+
+@pytest.mark.integration
 async def test_conversational_state_one_is_balance_or_reward(
     session, session_factory, store
 ):
