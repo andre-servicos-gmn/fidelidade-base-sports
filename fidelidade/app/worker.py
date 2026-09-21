@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 from app.config import get_settings
 from app.dependencies import get_message_sender, get_session_factory
 from app.integrations.touchpay.client import TouchPayClient
+from app.logging_config import configure_logging
 from app.services.ingestion_service import IngestionReport, ingest_transactions
 from app.whatsapp.affiliate_prompt import dispatch_affiliate_prompts
 
@@ -140,10 +141,7 @@ def main() -> None:
     """
     import sys
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    configure_logging(get_settings().log_level)
 
     if "--once" in sys.argv[1:]:
         client = _build_touchpay_client()

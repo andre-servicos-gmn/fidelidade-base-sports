@@ -8,7 +8,7 @@ via `asyncio.gather`, cada um na SUA própria sessão/conexão.
 import asyncio
 import uuid
 from collections.abc import AsyncIterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -131,6 +131,7 @@ async def _make_coupons(
     n: int,
     value: Decimal = REWARD_VALUE,
     cost: int = REWARD_COST,
+    expires_at: datetime | None = None,
 ) -> list[str]:
     codes = []
     for i in range(n):
@@ -143,6 +144,7 @@ async def _make_coupons(
                 discount_value=value,
                 points_cost=cost,
                 status=CouponStatus.AVAILABLE,
+                expires_at=expires_at,
             )
         )
         codes.append(code)
@@ -240,6 +242,48 @@ async def test_no_coupon_available(session: AsyncSession):
 
     assert await get_balance(session, customer_id) == 600
     assert await _count_allocated_for(session, customer_id) == 0
+
+
+# --------------------------------------------------------------------------- #
+# Validade do cupom                                                            #
+# --------------------------------------------------------------------------- #
+async def test_registered_expiry_is_kept_on_redemption(session: AsyncSession):
+    """A validade cadastrada (a do cupom real) não é trocada por hoje + 30."""
+    customer = await _make_customer_with_points(session, REDEEM_DOCS[0], 600)
+    real = (datetime.now(timezone.utc) + timedelta(days=10)).replace(microsecond=0)
+    await _make_coupons(session, 1, expires_at=real)
+
+    result = await redeem_coupon(session, customer.id, REWARD_ID)
+
+    assert result.expires_at == real
+
+
+async def test_expired_coupon_is_never_redeemed(session: AsyncSession):
+    """Vencido não é entregue: o cliente perderia os pontos por um código morto."""
+    customer = await _make_customer_with_points(session, REDEEM_DOCS[0], 600)
+    customer_id = customer.id  # ver nota em test_insufficient_points_has_zero_effect
+    ontem = datetime.now(timezone.utc) - timedelta(days=1)
+    await _make_coupons(session, 1, expires_at=ontem)
+
+    with pytest.raises(NoCouponAvailableError):
+        await redeem_coupon(session, customer_id, REWARD_ID)
+
+    assert await get_balance(session, customer_id) == 600
+    assert await _count_allocated_for(session, customer_id) == 0
+
+
+async def test_expired_coupons_are_left_out_of_catalog(session: AsyncSession):
+    """O catálogo só conta o que dá para resgatar."""
+    ontem = datetime.now(timezone.utc) - timedelta(days=1)
+    amanha = datetime.now(timezone.utc) + timedelta(days=1)
+    await _make_coupons(session, 2, expires_at=ontem)
+    await _make_coupons(session, 1, expires_at=amanha)
+
+    rewards = await list_available_rewards(session)
+    ours = [r for r in rewards if r["reward_id"] == REWARD_ID]
+
+    assert len(ours) == 1
+    assert ours[0]["available_count"] == 1
 
 
 # --------------------------------------------------------------------------- #

@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     # com um SessionStore compartilhado (Redis).
     run_worker_in_app: bool = False
 
+    # --- Log ---
+    # Nível dos logs da aplicação (`fidelidade.*`). INFO mostra cada ciclo do
+    # worker (compras lidas/creditadas, perguntas enviadas); WARNING esconde.
+    log_level: str = "INFO"
+
     # --- API administrativa (JWT) ---
     # Segredo de assinatura do JWT. TROQUE em produção (segredo forte).
     jwt_secret: str = "dev-insecure-jwt-secret-change-me"

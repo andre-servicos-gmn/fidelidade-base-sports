@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import Settings, get_settings
 from app.integrations.touchpay.client import TouchPayClient
 from app.integrations.touchpay.mock_client import MockTouchPayClient
+from app.logging_config import configure_logging
 from app.routes.admin.affiliates import router as admin_affiliates_router
 from app.routes.admin.auth import router as admin_auth_router
 from app.routes.admin.coupons import router as admin_coupons_router
@@ -43,6 +44,8 @@ def get_touchpay_client(settings: Settings | None = None) -> TouchPayClient:
         token=settings.touchpay_token,
     )
 
+
+configure_logging(get_settings().log_level)
 
 logger = logging.getLogger("fidelidade.main")
 

@@ -25,8 +25,11 @@ CONCORRÊNCIA (escolhas documentadas)
    (skip) a linha travada pelo primeiro em vez de esperar por ela. Assim nunca
    o mesmo cupom é alocado a dois clientes, e não há contenção desnecessária.
 
-Política de negócio: os pontos são debitados no resgate; o cupom recebe
-`expires_at`. Pontos NÃO retornam automaticamente se o cupom expirar — mas a
+Política de negócio: os pontos são debitados no resgate. A validade do cupom
+entregue é a CADASTRADA (espelha o cupom real da TouchPay, que é o que o totem
+aplica); só sem validade cadastrada vale o prazo padrão de `expiration_days`.
+Cupom já vencido nunca é entregue nem aparece no catálogo. Pontos NÃO retornam
+automaticamente se o cupom expirar — mas a
 porta fica aberta para isso no futuro (um job que varre cupons EXPIRED e credita
 um lançamento de estorno; o ledger já suporta via entry_type ADJUST/EXPIRE).
 """
@@ -37,7 +40,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -86,6 +89,29 @@ def _parse_reward_id(reward_id: str) -> tuple[CouponDiscountType, Decimal, int]:
 
 
 # --------------------------------------------------------------------------- #
+# Validade                                                                     #
+# --------------------------------------------------------------------------- #
+def _not_expired(now: datetime):
+    """Filtro SQL: cupom sem validade cadastrada, ou ainda dentro dela."""
+    return or_(CouponPool.expires_at.is_(None), CouponPool.expires_at > now)
+
+
+def coupon_expiry(
+    registered: datetime | None, now: datetime, expiration_days: int
+) -> datetime:
+    """Validade informada ao cliente no resgate.
+
+    A cadastrada vence: ela reflete o cupom real da TouchPay, e é essa data
+    que o totem respeita. Antes, o resgate sobrescrevia tudo com hoje + 30
+    dias — se o cupom real vencesse antes, o cliente recebia uma data falsa e
+    só descobria no caixa, com os pontos já debitados.
+    """
+    if registered is not None:
+        return registered
+    return now + timedelta(days=expiration_days)
+
+
+# --------------------------------------------------------------------------- #
 # Resgate                                                                      #
 # --------------------------------------------------------------------------- #
 async def redeem_coupon(
@@ -116,8 +142,10 @@ async def redeem_coupon(
             raise CustomerNotFoundError(customer_id)
 
         balance = await get_balance(session, customer_id)
+        now = datetime.now(timezone.utc)
 
-        # 2) Escolhe UM cupom AVAILABLE da recompensa com FOR UPDATE SKIP LOCKED.
+        # 2) Escolhe UM cupom AVAILABLE e não vencido da recompensa, com
+        #    FOR UPDATE SKIP LOCKED.
         coupon = (
             await session.execute(
                 select(CouponPool)
@@ -126,6 +154,7 @@ async def redeem_coupon(
                     CouponPool.discount_type == discount_type,
                     CouponPool.discount_value == discount_value,
                     CouponPool.points_cost == points_cost,
+                    _not_expired(now),
                 )
                 .order_by(CouponPool.created_at, CouponPool.id)
                 .limit(1)
@@ -153,12 +182,11 @@ async def redeem_coupon(
         if entry is None:  # não deve ocorrer (source_reference é None)
             raise RedemptionError("Falha ao registrar o débito do resgate.")
 
-        # 5) Aloca o cupom ao cliente, com expiração.
-        now = datetime.now(timezone.utc)
+        # 5) Aloca o cupom ao cliente, com a validade certa (ver `coupon_expiry`).
         coupon.status = CouponStatus.ALLOCATED
         coupon.allocated_to_customer_id = customer_id
         coupon.allocated_at = now
-        coupon.expires_at = now + timedelta(days=expiration_days)
+        coupon.expires_at = coupon_expiry(coupon.expires_at, now, expiration_days)
         await session.flush()
 
         result = RedemptionResult(
@@ -184,7 +212,7 @@ async def redeem_coupon(
 # Catálogo / consulta                                                          #
 # --------------------------------------------------------------------------- #
 async def list_available_rewards(session: AsyncSession) -> list[dict]:
-    """Catálogo de recompensas com cupom AVAILABLE (para o WhatsApp).
+    """Catálogo de recompensas com cupom AVAILABLE e não vencido (WhatsApp).
 
     Agrupa o pool por (discount_type, discount_value, points_cost) e devolve,
     para cada tipo com ao menos um cupom AVAILABLE, quantos restam e o
@@ -200,7 +228,12 @@ async def list_available_rewards(session: AsyncSession) -> list[dict]:
                 func.count().label("available_count"),
                 func.max(CouponPool.min_order_value).label("min_order_value"),
             )
-            .where(CouponPool.status == CouponStatus.AVAILABLE)
+            .where(
+                CouponPool.status == CouponStatus.AVAILABLE,
+                # Sem isto, o catálogo contava cupons vencidos como disponíveis:
+                # o cliente escolhia a recompensa e levava "esgotou".
+                _not_expired(datetime.now(timezone.utc)),
+            )
             .group_by(
                 CouponPool.discount_type,
                 CouponPool.discount_value,
