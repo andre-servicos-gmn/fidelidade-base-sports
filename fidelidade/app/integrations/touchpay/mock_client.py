@@ -39,11 +39,10 @@ def _demo_transaction(when: datetime) -> Transaction | None:
     ambiente do processo. Sem `DEMO_PURCHASE_CPF` definido, nada é adicionado e
     o mock se comporta exatamente como antes (testes não são afetados).
 
-    Por que aqui, e não num script avulso: o estado da conversa
-    (`AWAITING_AFFILIATE_CODE`) é guardado em memória do PROCESSO. Só a compra
-    que entra pelo worker rodando DENTRO da API (`RUN_WORKER_IN_APP=true`)
-    grava esse estado no mesmo processo que atende o webhook — que é o que faz
-    a resposta do cliente com o código de afiliado ser reconhecida.
+    Por que aqui, e não num script avulso: a compra entra pelo caminho real
+    (worker -> ingestão), que credita os pontos, grava a pergunta de indicação
+    no banco (`affiliate_questions`) e dispara a mensagem — é esse registro que
+    faz a resposta do cliente com o código de afiliado ser reconhecida.
 
     Variáveis (todas opcionais menos a primeira):
         DEMO_PURCHASE_CPF     CPF do comprador (só dígitos). Vazio = desligado.

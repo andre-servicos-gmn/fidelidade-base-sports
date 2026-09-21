@@ -7,6 +7,7 @@
 
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import pytest
 import pytest_asyncio
@@ -15,7 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from app.config import get_settings
-from app.db.models import Customer, LedgerEntry, LedgerEntryType
+from app.db.models import (
+    AffiliateQuestion,
+    AffiliateQuestionStatus,
+    Customer,
+    LedgerEntry,
+    LedgerEntryType,
+)
 from app.domain.ledger import verify_chain
 from app.domain.scoring import Rule, RuleType
 from app.integrations.touchpay.client import TouchPayClient
@@ -34,7 +41,6 @@ from app.services.ingestion_service import ingest_transactions
 from app.services.ledger_service import add_entry, get_balance
 from app.whatsapp.affiliate_prompt import dispatch_affiliate_prompts
 from app.whatsapp.evolution.sender import MockMessageSender
-from app.whatsapp.session_store import ConversationStep, InMemorySessionStore
 
 MIN_DATE = datetime(2026, 1, 1, tzinfo=timezone.utc)
 MAX_DATE = datetime(2026, 6, 1, tzinfo=timezone.utc)
@@ -127,6 +133,10 @@ async def _purge_test_data(session: AsyncSession) -> None:
         ).all()
     ]
     if ids:
+        # Perguntas de indicação referenciam customer (FK): apagar antes.
+        await session.execute(
+            delete(AffiliateQuestion).where(AffiliateQuestion.customer_id.in_(ids))
+        )
         await session.execute(
             delete(LedgerEntry).where(LedgerEntry.customer_id.in_(ids))
         )
@@ -323,22 +333,42 @@ async def test_ingestion_collects_and_dispatches_affiliate_prompts(
     assert prompt1.points == 350  # 300 + 25*2 (base 1/real)
     assert float(prompt1.amount) == 350.0  # valor da compra (R$)
 
-    # Dispatch grava o estado e envia via MockMessageSender.
-    sender = MockMessageSender()
-    store = InMemorySessionStore()
-    sent = await dispatch_affiliate_prompts(
-        report.affiliate_prompts, sender, store
+    # A pergunta ficou registrada no banco, na mesma transação do crédito: é
+    # lá que a resposta do cliente vai procurá-la, mesmo horas depois.
+    question = (
+        await session.execute(
+            select(AffiliateQuestion).where(
+                AffiliateQuestion.source_reference == prompt1.source_reference
+            )
+        )
+    ).scalar_one()
+    assert question.status is AffiliateQuestionStatus.PENDING
+    assert question.points == 350
+    assert question.amount == Decimal("350.00")
+    assert question.answered_at is None
+    customer1 = await find_customer_by_phone(
+        session, normalize_phone(prompt1.phone)
     )
+    assert question.customer_id == customer1.id
+
+    # Uma pergunta por compra perguntada.
+    questions = (
+        await session.execute(
+            select(AffiliateQuestion.source_reference).where(
+                AffiliateQuestion.source_reference.in_(
+                    [p.source_reference for p in report.affiliate_prompts]
+                )
+            )
+        )
+    ).all()
+    assert len(questions) == 4
+
+    # Dispatch só envia (via MockMessageSender); não grava estado de conversa.
+    sender = MockMessageSender()
+    sent = await dispatch_affiliate_prompts(report.affiliate_prompts, sender)
     assert sent == 4
     assert len(sender.sent) == 4
-
-    phone_n = normalize_phone(prompt1.phone)
-    state = await store.get(phone_n)
-    assert state is not None
-    assert state.step is ConversationStep.AWAITING_AFFILIATE_CODE
-    assert state.data["source_reference"] == prompt1.source_reference
-    assert state.data["points"] == 350
-    assert state.data["amount"] == "350.0"
+    assert normalize_phone(prompt1.phone) in {phone for phone, _ in sender.sent}
 
 
 @pytest.mark.integration

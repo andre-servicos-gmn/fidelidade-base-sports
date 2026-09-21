@@ -8,8 +8,8 @@ o fluxo com botões introduz:
 2. o disparo pós-compra precisa sair como TEMPLATE quando o provedor é a Meta,
    porque texto livre é recusado fora da janela de 24h.
 
-O segundo turno da conversa ("Sim" -> pede o código) depende de banco e está
-em `test_conversation.py`.
+O segundo turno da conversa ("Sim" -> pede o código) está em
+`test_affiliate_question_flow.py` (sem banco) e `test_conversation.py` (banco).
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from app.whatsapp.affiliate_prompt import AffiliatePrompt, dispatch_affiliate_pr
 from app.whatsapp.conversation import _AFFILIATE_SKIP_CMDS, _AFFILIATE_YES_CMDS
 from app.whatsapp.evolution.sender import MessageSender, MockMessageSender
 from app.whatsapp.meta.webhook_schema import MetaWebhook
-from app.whatsapp.session_store import ConversationStep, InMemorySessionStore
 
 PHONE = "11987654321"
 TEMPLATE = "compra_pontos_afiliado"
@@ -99,11 +98,14 @@ def test_button_labels_match_conversation_vocabulary():
         _button_payload("Não", payload="NAO")
     ).extract_text_messages()
     assert nao[0].text.lower() in _AFFILIATE_SKIP_CMDS
+    assert nao[0].text.lower() not in _AFFILIATE_YES_CMDS
 
+    # Rótulo aprovado no template: exatamente "Sim".
     sim = MetaWebhook.model_validate(
-        _button_payload("Sim, tenho o código")
+        _button_payload("Sim", payload="SIM")
     ).extract_text_messages()
     assert sim[0].text.lower() in _AFFILIATE_YES_CMDS
+    assert sim[0].text.lower() not in _AFFILIATE_SKIP_CMDS
 
 
 # --------------------------------------------------------------------------- #
@@ -164,9 +166,8 @@ def template_configurado(monkeypatch):
 async def test_dispatch_uses_template_on_meta(prompts, template_configurado):
     """Na Cloud API a pergunta sai como template, com os pontos no {{1}}."""
     sender = _FakeTemplateSender()
-    store = InMemorySessionStore()
 
-    sent = await dispatch_affiliate_prompts(prompts, sender, store)
+    sent = await dispatch_affiliate_prompts(prompts, sender)
 
     assert sent == 1
     assert sender.texts == []  # nada de texto livre: seria recusado (131047)
@@ -176,20 +177,12 @@ async def test_dispatch_uses_template_on_meta(prompts, template_configurado):
     assert enviado["language"] == "pt_BR"
     assert enviado["params"] == ["1000"]
 
-    # O estado é o mesmo do fluxo por texto — o botão não muda a máquina.
-    state = await store.get(PHONE)
-    assert state is not None
-    assert state.step is ConversationStep.AWAITING_AFFILIATE_CODE
-    assert state.data["source_reference"] == "TX-1"
-    assert not state.data.get("code_requested")
-
 
 async def test_dispatch_uses_text_on_evolution(prompts, template_configurado):
     """Provedor sem template (Evolution/mock) segue no texto livre de sempre."""
     sender = MockMessageSender()
-    store = InMemorySessionStore()
 
-    sent = await dispatch_affiliate_prompts(prompts, sender, store)
+    sent = await dispatch_affiliate_prompts(prompts, sender)
 
     assert sent == 1
     assert len(sender.sent) == 1
@@ -206,10 +199,9 @@ async def test_dispatch_warns_when_template_missing(prompts, monkeypatch, caplog
     get_settings.cache_clear()
 
     sender = _FakeTemplateSender()
-    store = InMemorySessionStore()
 
     with caplog.at_level("WARNING", logger="fidelidade.affiliate_prompt"):
-        sent = await dispatch_affiliate_prompts(prompts, sender, store)
+        sent = await dispatch_affiliate_prompts(prompts, sender)
 
     assert sent == 1
     assert sender.templates == []

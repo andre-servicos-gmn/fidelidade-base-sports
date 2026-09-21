@@ -85,7 +85,13 @@ class Settings(BaseSettings):
     # quando o worker de polling roda em processo separado.
     use_redis_session_store: bool = False
     # TTL (segundos) de inatividade de uma conversa. Vale para os dois stores.
-    session_ttl_seconds: int = 600
+    # Só cobre a conversa normal (menu, cadastro, resgate). A pergunta de
+    # indicação pós-compra NÃO depende disto: fica no banco
+    # (`affiliate_questions`), porque o cliente responde ao template horas depois.
+    session_ttl_seconds: int = 3600
+    # Por quantos dias a resposta à pergunta de indicação ainda é aceita. Depois
+    # disso, um "sim"/"não" do cliente volta a ser tratado como conversa normal.
+    affiliate_answer_window_days: int = 7
 
     # --- Agendador de polling (worker de ingestão) ---
     # Intervalo, em segundos, entre ciclos de polling da TouchPay. Cada ciclo lê

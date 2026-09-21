@@ -42,10 +42,10 @@ class ConversationStep(str, Enum):
     AWAITING_TERMS_CONSENT = "AWAITING_TERMS_CONSENT"
     AWAITING_CPF = "AWAITING_CPF"
     AWAITING_REWARD_CHOICE = "AWAITING_REWARD_CHOICE"
-    # Após uma compra, perguntamos o código de afiliado. `data` carrega
-    # {"source_reference": str, "points": int} da compra a ser atribuída, e
-    # `code_requested` (bool) marca que o cliente já disse "sim" e o código foi
-    # pedido — o passo cobre os dois turnos do fluxo com botões.
+    # O cliente respondeu "Sim" à pergunta de indicação e o código foi pedido:
+    # a próxima mensagem é o código. A pergunta em si (compra, pontos, valor)
+    # fica no banco (`affiliate_questions`), não aqui — este passo só lembra
+    # que o código já foi pedido, e expira com a conversa.
     AWAITING_AFFILIATE_CODE = "AWAITING_AFFILIATE_CODE"
 
 

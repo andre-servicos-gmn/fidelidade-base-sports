@@ -3,8 +3,9 @@
 Puros (sem banco): usamos uma `session_factory` fake e um `TouchPayClient`
 controlado, injetados por monkeypatch. Cobrem:
 
-- `run_once` chama `ingest_transactions` com a janela recente e dispara os
-  prompts de afiliado no `session_store` (mesmo store da API).
+- `run_once` chama `ingest_transactions` com a janela recente e envia os
+  prompts de afiliado pelo `MessageSender` (a pergunta pendente fica no banco,
+  gravada pela ingestão — o worker não toca o estado de conversa).
 - `run_forever` roda ao menos um ciclo, para no `stop_event` e não morre quando
   um ciclo levanta exceção.
 """
@@ -21,10 +22,6 @@ from app import worker
 from app.services.ingestion_service import IngestionReport
 from app.whatsapp.affiliate_prompt import AffiliatePrompt
 from app.whatsapp.evolution.sender import MockMessageSender
-from app.whatsapp.session_store import (
-    ConversationStep,
-    InMemorySessionStore,
-)
 
 
 @asynccontextmanager
@@ -43,21 +40,15 @@ def _fake_get_session_factory():
 
 @pytest.fixture(autouse=True)
 def _wire_singletons(monkeypatch):
-    """Injeta um session_store e um sender de teste como os singletons da API.
-
-    Assim `run_once` grava o estado no MESMO store que assertamos, provando o
-    contrato "worker e webhook compartilham o store".
-    """
-    store = InMemorySessionStore()
+    """Injeta um sender de teste e a session_factory fake como singletons."""
     sender = MockMessageSender()
-    monkeypatch.setattr(worker, "get_session_store", lambda: store)
     monkeypatch.setattr(worker, "get_message_sender", lambda: sender)
     monkeypatch.setattr(worker, "get_session_factory", _fake_get_session_factory)
-    return store, sender
+    return sender
 
 
 async def test_run_once_ingests_and_dispatches_prompts(_wire_singletons, monkeypatch):
-    store, sender = _wire_singletons
+    sender = _wire_singletons
 
     captured: dict = {}
 
@@ -88,16 +79,13 @@ async def test_run_once_ingests_and_dispatches_prompts(_wire_singletons, monkeyp
         "max_date"
     ].tzinfo is not None
 
-    # O prompt foi disparado: estado gravado no store + mensagem enviada.
-    state = await store.get("11990000001")
-    assert state is not None
-    assert state.step is ConversationStep.AWAITING_AFFILIATE_CODE
+    # O prompt foi disparado: mensagem enviada ao telefone da compra.
     assert len(sender.sent) == 1
     assert sender.sent[0][0] == "11990000001"
 
 
 async def test_run_once_no_prompts_sends_nothing(_wire_singletons, monkeypatch):
-    store, sender = _wire_singletons
+    sender = _wire_singletons
 
     async def fake_ingest(session, client, min_date, max_date, **kwargs):
         return IngestionReport(total_read=0, credited=0)

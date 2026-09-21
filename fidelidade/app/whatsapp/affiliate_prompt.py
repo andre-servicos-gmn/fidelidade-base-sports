@@ -1,14 +1,12 @@
 """Disparo do prompt de afiliado após uma compra.
 
-A ingestão (`ingest_transactions`) NÃO envia mensagens — ela só coleta os
-`AffiliatePrompt` das compras recém-creditadas (clientes com telefone). Quem
-roda o ciclo (futuro agendador do polling) chama `dispatch_affiliate_prompts`
-para, por compra: gravar o estado `AWAITING_AFFILIATE_CODE` (com a compra a
-atribuir) e enviar a pergunta via `MessageSender`.
+A ingestão (`ingest_transactions`) NÃO envia mensagens — ela registra a
+pergunta no banco (`affiliate_questions`) e coleta os `AffiliatePrompt` das
+compras recém-creditadas (clientes com telefone). O worker chama
+`dispatch_affiliate_prompts` para enviar cada pergunta via `MessageSender`.
 
-A chave da sessão e o número de envio passam ambos por `normalize_phone`
-(mesma definição de "canônico" do webhook), garantindo que a resposta do
-cliente case com o estado gravado aqui.
+Este módulo só ENVIA. Não grava estado de conversa: a resposta do cliente é
+casada com a pergunta pelo banco, não pela sessão (ver `conversation.py`).
 """
 
 from __future__ import annotations
@@ -21,11 +19,6 @@ from app.config import get_settings
 from app.services.identity_service import normalize_phone
 from app.whatsapp import messages
 from app.whatsapp.evolution.sender import MessageSender
-from app.whatsapp.session_store import (
-    ConversationState,
-    ConversationStep,
-    SessionStore,
-)
 
 logger = logging.getLogger("fidelidade.affiliate_prompt")
 
@@ -82,27 +75,13 @@ class AffiliatePrompt:
 async def dispatch_affiliate_prompts(
     prompts: list[AffiliatePrompt],
     sender: MessageSender,
-    store: SessionStore,
 ) -> int:
-    """Grava o estado e envia a pergunta de cada prompt. Retorna quantos enviou."""
+    """Envia a pergunta de cada prompt. Retorna quantos enviou."""
     sent = 0
     for prompt in prompts:
         phone_n = normalize_phone(prompt.phone)
         if not phone_n:
             continue
-        await store.set(
-            phone_n,
-            ConversationState(
-                step=ConversationStep.AWAITING_AFFILIATE_CODE,
-                data={
-                    "source_reference": prompt.source_reference,
-                    "points": prompt.points,
-                    # String para ser serializável (futuro store Redis) sem
-                    # perder precisão do Decimal.
-                    "amount": str(prompt.amount),
-                },
-            ),
-        )
         try:
             await _send_prompt(sender, phone_n, prompt.points)
             sent += 1
@@ -110,9 +89,10 @@ async def dispatch_affiliate_prompts(
             # Uma falha de envio NÃO pode abortar o lote. Sem este try, o
             # primeiro erro (número inexistente, instabilidade, ou — na Cloud
             # API — a recusa por mensagem fora da janela de 24h) interromperia
-            # o for e os demais clientes nunca receberiam a pergunta. E, como a
-            # compra já foi creditada e o ledger é idempotente, esse prompt
-            # nunca mais seria gerado: perda silenciosa e definitiva.
+            # o for e os demais clientes nunca receberiam a pergunta. Ela não é
+            # reenviada (a compra já foi creditada e o ledger é idempotente),
+            # mas continua registrada no banco: se o cliente escrever dentro da
+            # janela, ainda dá para responder.
             logger.exception(
                 "falha ao enviar pergunta de afiliado para %s; seguindo com o "
                 "restante do lote",

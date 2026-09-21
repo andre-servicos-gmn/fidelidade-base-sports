@@ -22,6 +22,7 @@ from app.domain.scoring import Rule, calculate_points
 from app.db.models import LedgerEntryType
 from app.integrations.touchpay.client import TouchPayClient
 from app.mappers.transaction_mapper import to_scoring_context
+from app.services.affiliate_service import create_affiliate_question
 from app.services.customer_service import get_or_create_customer
 from app.services.ledger_service import add_entry, is_first_purchase
 from app.services.rule_service import get_active_rules
@@ -164,6 +165,16 @@ async def ingest_transactions(
                         if customer.phone and await is_first_purchase(
                             session, customer.id, transaction.uuid
                         ):
+                            # A pergunta fica registrada no banco, na mesma
+                            # transação do crédito: é lá que a resposta do
+                            # cliente vai procurá-la, mesmo horas depois.
+                            await create_affiliate_question(
+                                session,
+                                customer_id=customer.id,
+                                source_reference=transaction.uuid,
+                                points=result.total_points,
+                                amount=Decimal(str(transaction.totalPrice)),
+                            )
                             report.affiliate_prompts.append(
                                 AffiliatePrompt(
                                     phone=customer.phone,

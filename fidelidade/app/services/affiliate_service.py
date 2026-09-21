@@ -16,13 +16,20 @@ from __future__ import annotations
 import math
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Affiliate, AffiliateAttribution, AffiliateType
+from app.db.models import (
+    Affiliate,
+    AffiliateAttribution,
+    AffiliateQuestion,
+    AffiliateQuestionStatus,
+    AffiliateType,
+)
 
 
 @dataclass(frozen=True)
@@ -207,6 +214,73 @@ async def record_attribution(
     except IntegrityError:
         return None
     return attribution
+
+
+# --------------------------------------------------------------------------- #
+# Pergunta de indicação pós-compra                                             #
+# --------------------------------------------------------------------------- #
+async def create_affiliate_question(
+    session: AsyncSession,
+    *,
+    customer_id: uuid.UUID,
+    source_reference: str,
+    points: int,
+    amount: Decimal,
+) -> AffiliateQuestion | None:
+    """Registra que a compra vai gerar a pergunta. None se já registrada.
+
+    Idempotente pelo mesmo motivo do ledger: o polling relê a mesma transação
+    em janelas sobrepostas. SAVEPOINT + constraint única, como em
+    `record_attribution`. NÃO commita.
+    """
+    question = AffiliateQuestion(
+        id=uuid.uuid4(),
+        customer_id=customer_id,
+        source_reference=source_reference,
+        points=points,
+        amount=amount,
+        status=AffiliateQuestionStatus.PENDING,
+    )
+    try:
+        async with session.begin_nested():
+            session.add(question)
+            await session.flush()
+    except IntegrityError:
+        return None
+    return question
+
+
+async def get_pending_affiliate_question(
+    session: AsyncSession,
+    customer_id: uuid.UUID,
+    window_days: int,
+) -> AffiliateQuestion | None:
+    """A pergunta ainda sem resposta mais recente do cliente, dentro da janela.
+
+    A janela existe para que um "sim" ou "não" dito semanas depois, em outro
+    contexto, não seja lido como resposta a uma compra antiga.
+    """
+    limite = datetime.now(timezone.utc) - timedelta(days=window_days)
+    return (
+        await session.execute(
+            select(AffiliateQuestion)
+            .where(
+                AffiliateQuestion.customer_id == customer_id,
+                AffiliateQuestion.status == AffiliateQuestionStatus.PENDING,
+                AffiliateQuestion.created_at >= limite,
+            )
+            .order_by(AffiliateQuestion.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+def close_affiliate_question(
+    question: AffiliateQuestion, status: AffiliateQuestionStatus
+) -> None:
+    """Marca a pergunta como respondida. NÃO commita."""
+    question.status = status
+    question.answered_at = datetime.now(timezone.utc)
 
 
 async def get_affiliate_stats(

@@ -16,12 +16,14 @@ from contextlib import AbstractAsyncContextManager
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from decimal import Decimal
-
+from app.config import get_settings
+from app.db.models import AffiliateQuestion, AffiliateQuestionStatus
 from app.domain.redemption import InsufficientPointsError, NoCouponAvailableError
 from app.services.affiliate_service import (
+    close_affiliate_question,
     compute_affiliate_points,
     get_active_affiliate_by_code,
+    get_pending_affiliate_question,
     record_attribution,
 )
 from app.domain.security import is_valid_cpf
@@ -129,22 +131,22 @@ def _detect_intent(text_clean: str, cmd: str) -> str | None:
 # Após esta quantidade de respostas inválidas no passo do CPF, o bot para de
 # insistir e encerra educadamente (em vez de repetir a mesma mensagem sem fim).
 _MAX_CPF_ATTEMPTS = 3
-# Respostas que pulam a pergunta do código de afiliado (sem indicação).
+# Respostas que recusam a pergunta de indicação (fecha como DECLINED).
 # "sair"/"cancelar" saíram: agora encerram a conversa (`_EXIT_CMDS`), tratados
-# antes de chegar aqui.
+# antes de chegar aqui. "menu" também saiu: a pergunta vive no banco, e quem
+# só quer ver o menu não pode perder a indicação para sempre por isso.
 _AFFILIATE_SKIP_CMDS = {
     "não",
     "nao",
     "não tenho",
     "nao tenho",
-    "menu",
     "pular",
 }
 
 # Respostas afirmativas à pergunta de afiliado. O clique num botão do template
 # chega como o RÓTULO do botão, então estes valores precisam bater com o texto
-# aprovado na Meta — mudou o rótulo lá, mude aqui. As formas secas ("sim"/"s")
-# cobrem quem responde digitando, na Evolution ou já dentro da janela de 24h.
+# aprovado na Meta ("Sim" / "Não") — mudou o rótulo lá, mude aqui. As formas
+# com "tenho o código" cobrem quem responde digitando.
 _AFFILIATE_YES_CMDS = {
     "sim",
     "s",
@@ -293,13 +295,31 @@ async def _handle_registered(
     cmd: str,
 ) -> list[str]:
     state = await store.get(phone_n)
+    window_days = get_settings().affiliate_answer_window_days
+    # Evita reinterpretar a mesma mensagem como resposta duas vezes (ex.: "menu"
+    # com o código pedido já passou pela pergunta e deve só mostrar o menu).
+    question_handled = False
 
-    # Após uma compra, perguntamos o código de afiliado: a resposta é o código
-    # (ou "não"), não um atalho de menu. Tem precedência sobre os comandos.
+    # Código de afiliado já pedido (o cliente disse "Sim"): a próxima mensagem
+    # é o código, não um atalho de menu. A pergunta em si vem do BANCO — se já
+    # foi respondida em outro lugar ou saiu da janela, o passo é descartado e a
+    # mensagem segue o fluxo normal.
     if state is not None and state.step is ConversationStep.AWAITING_AFFILIATE_CODE:
-        return await _handle_affiliate_code(
-            session, store, phone_n, customer_id, state, text_clean, cmd
+        question = await get_pending_affiliate_question(
+            session, customer_id, window_days
         )
+        if question is None:
+            await store.delete(phone_n)
+            state = None
+        else:
+            replies = await _answer_affiliate_question(
+                session, store, phone_n, customer_id, question,
+                text_clean, cmd, code_requested=True,
+            )
+            if replies is not None:
+                return replies
+            state = None
+            question_handled = True
 
     # No passo de escolha de recompensa, o número é a escolha (não atalho).
     if state is not None and state.step is ConversationStep.AWAITING_REWARD_CHOICE:
@@ -320,6 +340,23 @@ async def _handle_registered(
         return await _handle_reward_choice(
             session, store, phone_n, customer_id, state, text_clean
         )
+
+    # Pergunta de indicação pendente no banco (enviada após uma compra). Vale
+    # mesmo sem estado de conversa: o cliente costuma responder horas depois,
+    # quando a sessão já expirou. Só "sim", "não" ou um código válido contam
+    # como resposta; qualquer outra coisa ("saldo", "1"...) segue o fluxo
+    # normal e a pergunta continua pendente.
+    if not question_handled:
+        question = await get_pending_affiliate_question(
+            session, customer_id, window_days
+        )
+        if question is not None:
+            replies = await _answer_affiliate_question(
+                session, store, phone_n, customer_id, question,
+                text_clean, cmd, code_requested=False,
+            )
+            if replies is not None:
+                return replies
 
     # Entende o comando exato E a frase natural ("quero resgatar um cupom").
     intent = _detect_intent(text_clean, cmd)
@@ -351,56 +388,66 @@ async def _handle_registered(
     return [messages.menu()]
 
 
-async def _handle_affiliate_code(
+async def _answer_affiliate_question(
     session: AsyncSession,
     store: SessionStore,
     phone_n: str,
     customer_id,
-    state: ConversationState,
+    question: AffiliateQuestion,
     text_clean: str,
     cmd: str,
-) -> list[str]:
-    """Captura o código de afiliado e atribui a compra pendente do `state`."""
-    # "não"/"menu"/"pular" -> segue sem indicação.
+    *,
+    code_requested: bool,
+) -> list[str] | None:
+    """Interpreta a mensagem como resposta à pergunta de indicação pendente.
+
+    `code_requested`: o cliente já disse "Sim" e pedimos o código (passo
+    AWAITING_AFFILIATE_CODE na sessão). Retorna as respostas, ou None quando a
+    mensagem NÃO é uma resposta à pergunta — aí o chamador segue o fluxo normal
+    e a pergunta continua pendente no banco.
+    """
+    # "não"/"pular" -> fecha a pergunta sem indicação.
     if cmd in _AFFILIATE_SKIP_CMDS:
+        close_affiliate_question(question, AffiliateQuestionStatus.DECLINED)
+        await session.commit()
         await store.delete(phone_n)
         return [messages.affiliate_skipped()]
+
+    # "menu" com o código pedido: mostra o menu e deixa a pergunta pendente
+    # (ele ainda pode responder dentro da janela).
+    if code_requested and cmd in _MENU_CMDS:
+        await store.delete(phone_n)
+        return None
 
     # Botão "Sim": o clique NÃO é um código — é o cliente dizendo que TEM um.
     # Sem este ramo, "Sim" seguiria para `get_active_affiliate_by_code`, não
     # acharia nada e o cliente levaria "código não encontrado" por ter clicado
-    # no botão certo. Pergunta o código e MANTÉM o passo.
+    # no botão certo. Pergunta o código e grava o passo na sessão.
     #
-    # `code_requested` limita a interpretação ao primeiro turno: depois de
-    # pedirmos o código, um "sim" seguinte volta a ser tratado como código —
-    # protege o caso (improvável, mas possível) de um afiliado cujo código
-    # seja literalmente "sim".
-    if not state.data.get("code_requested") and cmd in _AFFILIATE_YES_CMDS:
+    # Só vale antes de pedirmos o código: depois disso, um "sim" seguinte
+    # volta a ser tratado como código — protege o caso (improvável, mas
+    # possível) de um afiliado cujo código seja literalmente "sim".
+    if not code_requested and cmd in _AFFILIATE_YES_CMDS:
         await store.set(
             phone_n,
-            ConversationState(
-                step=ConversationStep.AWAITING_AFFILIATE_CODE,
-                data={**state.data, "code_requested": True},
-            ),
+            ConversationState(step=ConversationStep.AWAITING_AFFILIATE_CODE),
         )
         return [messages.ask_affiliate_code_after_yes()]
 
-    source_reference = state.data.get("source_reference")
-    points = int(state.data.get("points", 0))
-    amount = Decimal(str(state.data.get("amount", "0")))
-    # Sem a compra de referência não há o que atribuir (estado inconsistente).
-    if not source_reference:
-        await store.delete(phone_n)
-        return [messages.affiliate_skipped()]
-
     affiliate = await get_active_affiliate_by_code(session, text_clean)
     if affiliate is None:
-        # Código desconhecido: mantém o passo para nova tentativa ou "não".
-        return [messages.affiliate_code_not_found()]
+        if code_requested:
+            # Código desconhecido: mantém o passo para nova tentativa ou "não".
+            return [messages.affiliate_code_not_found()]
+        # Sem o código pedido, a mensagem não é resposta ("saldo", "1"...).
+        return None
 
-    # Captura nome/id e calcula os pontos do afiliado ANTES do commit (evita
-    # acessar atributos de ORM expirado depois).
+    # Captura o que for preciso ANTES do commit (evita acessar atributos de
+    # ORM expirado depois).
     affiliate_name = affiliate.name
+    source_reference = question.source_reference
+    points = question.points
+    amount = question.amount
 
     # TRAVA DE COMISSÃO: o afiliado ganha pontos só na PRIMEIRA compra daquele
     # CPF. Compras seguintes ainda são atribuídas (a informação de quem indicou
@@ -408,8 +455,8 @@ async def _handle_affiliate_code(
     #
     # A checagem é refeita aqui, contra o ledger, mesmo a ingestão já só
     # perguntando na primeira compra: aquilo é UX, isto é a garantia. Sem esta
-    # linha, um estado antigo na sessão ou uma mensagem fora de hora poderia
-    # gerar comissão indevida — e comissão indevida é dinheiro.
+    # linha, uma pergunta antiga ainda pendente ou uma mensagem fora de hora
+    # poderia gerar comissão indevida — e comissão indevida é dinheiro.
     if await is_first_purchase(session, customer_id, source_reference):
         affiliate_points = compute_affiliate_points(amount, affiliate.points_rate)
     else:
@@ -423,6 +470,7 @@ async def _handle_affiliate_code(
         amount=amount,
         affiliate_points=affiliate_points,
     )
+    close_affiliate_question(question, AffiliateQuestionStatus.ATTRIBUTED)
     await session.commit()
 
     await store.delete(phone_n)

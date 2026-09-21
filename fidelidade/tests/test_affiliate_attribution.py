@@ -26,6 +26,7 @@ from app.db.models import (
     AdminUser,
     Affiliate,
     AffiliateAttribution,
+    AffiliateQuestion,
     AffiliateType,
     Customer,
     LedgerEntry,
@@ -75,6 +76,10 @@ async def _purge(session: AsyncSession) -> None:
         ).all()
     ]
     if ids:
+        # Perguntas de indicação também referenciam customer (FK).
+        await session.execute(
+            delete(AffiliateQuestion).where(AffiliateQuestion.customer_id.in_(ids))
+        )
         await session.execute(
             delete(LedgerEntry).where(LedgerEntry.customer_id.in_(ids))
         )

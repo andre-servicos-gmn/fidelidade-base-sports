@@ -124,8 +124,11 @@ esse estado vive é escolhido por config (`app/whatsapp/session_store.py`):
   o estado se perde em restart. Bom para dev e testes.
 - **Redis** (`USE_REDIS_SESSION_STORE=true` + `REDIS_URL`): estado compartilhado
   entre processos/workers, com TTL nativo. **Obrigatório** para rodar
-  `uvicorn --workers N` OU o worker de polling em processo separado (senão a
-  resposta do cliente cai num processo que não tem o estado).
+  `uvicorn --workers N` (senão a resposta do cliente cai num processo que não
+  tem o estado).
+
+O estado expira após `SESSION_TTL_SECONDS` de inatividade (default 3600). A
+pergunta de indicação pós-compra NÃO depende dele: vive no banco (ver abaixo).
 
 O Redis é **fail-safe**: se ficar indisponível, a conversa é tratada como "sem
 estado" (o cliente vê o menu) em vez de o webhook estourar 500.
@@ -146,6 +149,10 @@ O **worker** (`app/worker.py`) é quem pergunta, em intervalos regulares. A cada
 ciclo: lê as compras da janela recente (`ingest_transactions`) → credita pontos
 → dispara a pergunta de afiliado no WhatsApp (`dispatch_affiliate_prompts`).
 
+A pergunta fica registrada no banco (`affiliate_questions`), não no estado da
+conversa: o cliente pode responder horas depois (ou após um deploy) e a resposta
+ainda é casada com a compra, dentro de `AFFILIATE_ANSWER_WINDOW_DAYS` (default 7).
+
 Sem o worker rodando, compras do totem **nunca viram pontos** e a pergunta de
 afiliado nunca é enviada. É o "coração" que faz o sistema andar sozinho.
 
@@ -158,12 +165,11 @@ Dois jeitos de rodar:
 
 ```bash
 # 1) No MESMO processo da API (simples; ideal para 1 worker / testes ponta a
-#    ponta — webhook e dispatch compartilham o session_store em memória).
-#    Ligue RUN_WORKER_IN_APP=true no .env e suba só a API:
+#    ponta). Ligue RUN_WORKER_IN_APP=true no .env e suba só a API:
 uvicorn app.main:app
 
-# 2) Como processo à parte (produção multi-worker; exige SessionStore
-#    compartilhado/Redis para o estado casar com o webhook):
+# 2) Como processo à parte (o worker só grava no banco e envia; a pergunta de
+#    indicação é casada pelo banco, então não depende do SessionStore):
 python -m app.worker            # loop infinito
 python -m app.worker --once     # um único ciclo (útil para cron/depuração)
 ```

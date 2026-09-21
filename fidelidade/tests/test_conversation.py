@@ -6,6 +6,7 @@
 
 import uuid
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -23,6 +24,8 @@ from app.config import get_settings
 from app.db.models import (
     Affiliate,
     AffiliateAttribution,
+    AffiliateQuestion,
+    AffiliateQuestionStatus,
     AffiliateType,
     CouponDiscountType,
     CouponPool,
@@ -119,11 +122,14 @@ async def _purge(session: AsyncSession) -> None:
         ).all()
     ]
     if ids:
-        # Atribuições e aceites referenciam customer (FK): apagar antes.
+        # Atribuições, perguntas e aceites referenciam customer (FK): apagar antes.
         await session.execute(
             delete(AffiliateAttribution).where(
                 AffiliateAttribution.customer_id.in_(ids)
             )
+        )
+        await session.execute(
+            delete(AffiliateQuestion).where(AffiliateQuestion.customer_id.in_(ids))
         )
         await session.execute(
             delete(TermsAcceptance).where(TermsAcceptance.customer_id.in_(ids))
@@ -366,31 +372,75 @@ async def test_recognized_phone_goes_to_menu(session, session_factory, store):
     assert "Resgatar" in out[0] or "resgatar" in out[0]
 
 
+# --- Pergunta de indicação pós-compra (vive no banco) ---------------------- #
+async def _seed_question(
+    session,
+    customer_id,
+    source_reference,
+    *,
+    points,
+    amount="200.00",
+    age_days=0,
+):
+    """Simula o que a ingestão grava: o crédito da compra + a pergunta pendente.
+
+    O crédito no ledger (EARN com o mesmo `source_reference`) não é enfeite: a
+    trava de comissão (`is_first_purchase`) lê o ledger, e sem ele o afiliado
+    ficaria com comissão zero.
+    """
+    await add_entry(
+        session, customer_id, LedgerEntryType.EARN, points, source_reference
+    )
+    question = AffiliateQuestion(
+        id=uuid.uuid4(),
+        customer_id=customer_id,
+        source_reference=source_reference,
+        points=points,
+        amount=Decimal(amount),
+        status=AffiliateQuestionStatus.PENDING,
+    )
+    if age_days:
+        question.created_at = datetime.now(timezone.utc) - timedelta(days=age_days)
+    session.add(question)
+    await session.commit()
+    return question
+
+
+async def _question_status(session, source_reference) -> AffiliateQuestionStatus:
+    # Sessão de teste separada da do handler: expira o cache antes de reler.
+    session.expire_all()
+    return (
+        await session.execute(
+            select(AffiliateQuestion.status).where(
+                AffiliateQuestion.source_reference == source_reference
+            )
+        )
+    ).scalar_one()
+
+
+async def _set_code_requested(store) -> None:
+    """Estado de quem já clicou "Sim" e recebeu o pedido do código."""
+    await store.set(
+        normalize_phone(PHONE_A),
+        ConversationState(step=ConversationStep.AWAITING_AFFILIATE_CODE),
+    )
+
+
 @pytest.mark.integration
 async def test_affiliate_code_attributes_purchase(session, session_factory, store):
+    """Código enviado direto (sem "Sim" antes) já atribui a compra pendente."""
     customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
     customer_id = customer.id
     affiliate = await _seed_affiliate(session)
     affiliate_id = affiliate.id
 
-    # Simula o prompt pós-compra: estado AWAITING_AFFILIATE_CODE para o telefone.
     # Compra de R$ 200; afiliado com taxa 50% -> deve ganhar 100 pontos.
-    await store.set(
-        normalize_phone(PHONE_A),
-        ConversationState(
-            step=ConversationStep.AWAITING_AFFILIATE_CODE,
-            data={
-                "source_reference": "WACONV-tx1",
-                "points": 120,
-                "amount": "200.00",
-            },
-        ),
-    )
+    await _seed_question(session, customer_id, "WACONV-tx1", points=120)
 
     out = await handle_message(PHONE_A, AFF_CODE, store, session_factory)
     assert any("indicação" in m.lower() for m in out)
 
-    # Atribuição gravada com a compra/pontos corretos.
+    # Atribuição gravada com a compra/pontos da PERGUNTA no banco.
     attr = (
         await session.execute(
             select(AffiliateAttribution).where(
@@ -402,29 +452,31 @@ async def test_affiliate_code_attributes_purchase(session, session_factory, stor
     assert attr.customer_id == customer_id
     assert attr.points == 120  # pontos do cliente
     assert attr.affiliate_points == 100  # floor(200 × 50%)
-    # Estado limpo após atribuir.
+    assert await _question_status(session, "WACONV-tx1") is (
+        AffiliateQuestionStatus.ATTRIBUTED
+    )
     assert await store.get(normalize_phone(PHONE_A)) is None
 
 
 @pytest.mark.integration
 async def test_affiliate_code_skip(session, session_factory, store):
+    """"não" fecha a pergunta como DECLINED — não volta a ser perguntada."""
     customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
     customer_id = customer.id
     await _seed_affiliate(session)
-
-    await store.set(
-        normalize_phone(PHONE_A),
-        ConversationState(
-            step=ConversationStep.AWAITING_AFFILIATE_CODE,
-            data={"source_reference": "WACONV-tx2", "points": 50},
-        ),
-    )
+    await _seed_question(session, customer_id, "WACONV-tx2", points=50)
 
     out = await handle_message(PHONE_A, "não", store, session_factory)
-    assert len(out) == 1
-    # Nada atribuído e estado limpo.
+    assert out == [messages.affiliate_skipped()]
     assert await _attribution_count(session, customer_id) == 0
+    assert await _question_status(session, "WACONV-tx2") is (
+        AffiliateQuestionStatus.DECLINED
+    )
     assert await store.get(normalize_phone(PHONE_A)) is None
+
+    # Um novo "não" já não é resposta a nada: cai no menu.
+    out = await handle_message(PHONE_A, "não", store, session_factory)
+    assert out == [messages.menu()]
 
 
 @pytest.mark.integration
@@ -432,66 +484,47 @@ async def test_affiliate_code_unknown_keeps_step(session, session_factory, store
     customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
     customer_id = customer.id
     await _seed_affiliate(session)
-
-    await store.set(
-        normalize_phone(PHONE_A),
-        ConversationState(
-            step=ConversationStep.AWAITING_AFFILIATE_CODE,
-            data={"source_reference": "WACONV-tx3", "points": 80},
-        ),
-    )
+    await _seed_question(session, customer_id, "WACONV-tx3", points=80)
+    await _set_code_requested(store)
 
     out = await handle_message(PHONE_A, "CODIGO-INEXISTENTE", store, session_factory)
     assert any("não encontrei" in m.lower() for m in out)
-    # Nada atribuído; mantém o passo para nova tentativa.
+    # Nada atribuído; mantém o passo e a pergunta para nova tentativa.
     assert await _attribution_count(session, customer_id) == 0
     state = await store.get(normalize_phone(PHONE_A))
     assert state is not None
     assert state.step is ConversationStep.AWAITING_AFFILIATE_CODE
+    assert await _question_status(session, "WACONV-tx3") is (
+        AffiliateQuestionStatus.PENDING
+    )
 
 
 @pytest.mark.integration
-async def test_affiliate_yes_button_asks_for_code(session, session_factory, store):
-    """Clicar "Sim" pede o código em vez de tratar o rótulo como código.
+async def test_affiliate_late_yes_without_session_asks_for_code(
+    session, session_factory, store
+):
+    """O "Sim" que chega horas depois, sem estado de conversa, ainda vale.
 
-    Sem este ramo, "Sim" iria direto para a busca de afiliado, não acharia
-    nada e o cliente levaria "não encontrei esse código" por ter clicado no
-    botão certo — ficando preso no passo sem entender por quê.
+    Era o bug que motivou a pergunta no banco: a sessão (TTL curto, em memória)
+    já tinha sumido e o "Sim" caía no menu, perdendo a indicação para sempre.
     """
     customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
     customer_id = customer.id
     await _seed_affiliate(session)
+    await _seed_question(session, customer_id, "WACONV-tx4", points=90)
+    assert await store.get(normalize_phone(PHONE_A)) is None
 
-    await store.set(
-        normalize_phone(PHONE_A),
-        ConversationState(
-            step=ConversationStep.AWAITING_AFFILIATE_CODE,
-            data={
-                "source_reference": "WACONV-tx4",
-                "points": 90,
-                "amount": "150.00",
-            },
-        ),
-    )
+    out = await handle_message(PHONE_A, "Sim", store, session_factory)
+    assert out == [messages.ask_affiliate_code_after_yes()]
 
-    out = await handle_message(
-        PHONE_A, "Sim, tenho o código", store, session_factory
-    )
-    assert len(out) == 1
-    assert "código" in out[0].lower()
-    assert "não encontrei" not in out[0].lower()
-
-    # Nada atribuído ainda; o passo continua, agora marcado como "já pedi".
+    # Nada atribuído ainda; o passo agora lembra que o código foi pedido.
     assert await _attribution_count(session, customer_id) == 0
     state = await store.get(normalize_phone(PHONE_A))
     assert state is not None
     assert state.step is ConversationStep.AWAITING_AFFILIATE_CODE
-    assert state.data["code_requested"] is True
-    # Os dados da compra sobrevivem ao turno extra — sem eles não há o que
-    # atribuir quando o código chegar.
-    assert state.data["source_reference"] == "WACONV-tx4"
-    assert state.data["points"] == 90
-    assert state.data["amount"] == "150.00"
+    assert await _question_status(session, "WACONV-tx4") is (
+        AffiliateQuestionStatus.PENDING
+    )
 
 
 @pytest.mark.integration
@@ -503,20 +536,9 @@ async def test_affiliate_yes_then_code_attributes_purchase(
     customer_id = customer.id
     affiliate = await _seed_affiliate(session)
     affiliate_id = affiliate.id
+    await _seed_question(session, customer_id, "WACONV-tx5", points=120)
 
-    await store.set(
-        normalize_phone(PHONE_A),
-        ConversationState(
-            step=ConversationStep.AWAITING_AFFILIATE_CODE,
-            data={
-                "source_reference": "WACONV-tx5",
-                "points": 120,
-                "amount": "200.00",
-            },
-        ),
-    )
-
-    await handle_message(PHONE_A, "Sim, tenho o código", store, session_factory)
+    await handle_message(PHONE_A, "Sim", store, session_factory)
     out = await handle_message(PHONE_A, AFF_CODE, store, session_factory)
     assert any("indicação" in m.lower() for m in out)
 
@@ -531,6 +553,9 @@ async def test_affiliate_yes_then_code_attributes_purchase(
     assert attr.customer_id == customer_id
     assert attr.points == 120
     assert attr.affiliate_points == 100  # floor(200 × 50%)
+    assert await _question_status(session, "WACONV-tx5") is (
+        AffiliateQuestionStatus.ATTRIBUTED
+    )
     assert await store.get(normalize_phone(PHONE_A)) is None
 
 
@@ -540,19 +565,14 @@ async def test_affiliate_no_button_skips(session, session_factory, store):
     customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
     customer_id = customer.id
     await _seed_affiliate(session)
-
-    await store.set(
-        normalize_phone(PHONE_A),
-        ConversationState(
-            step=ConversationStep.AWAITING_AFFILIATE_CODE,
-            data={"source_reference": "WACONV-tx6", "points": 50},
-        ),
-    )
+    await _seed_question(session, customer_id, "WACONV-tx6", points=50)
 
     out = await handle_message(PHONE_A, "Não", store, session_factory)
-    assert len(out) == 1
+    assert out == [messages.affiliate_skipped()]
     assert await _attribution_count(session, customer_id) == 0
-    assert await store.get(normalize_phone(PHONE_A)) is None
+    assert await _question_status(session, "WACONV-tx6") is (
+        AffiliateQuestionStatus.DECLINED
+    )
 
 
 @pytest.mark.integration
@@ -562,25 +582,14 @@ async def test_affiliate_yes_after_code_requested_is_treated_as_code(
     """Depois de pedirmos o código, "sim" volta a ser um código.
 
     Protege o caso improvável de um afiliado cujo código seja literalmente
-    "sim": sem o `code_requested`, o cliente ficaria em laço, sempre ouvindo
-    "qual é o código?".
+    "sim": sem isso, o cliente ficaria em laço, sempre ouvindo "qual é o
+    código?".
     """
     customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
     customer_id = customer.id
     await _seed_affiliate(session)
-
-    await store.set(
-        normalize_phone(PHONE_A),
-        ConversationState(
-            step=ConversationStep.AWAITING_AFFILIATE_CODE,
-            data={
-                "source_reference": "WACONV-tx7",
-                "points": 70,
-                "amount": "100.00",
-                "code_requested": True,
-            },
-        ),
-    )
+    await _seed_question(session, customer_id, "WACONV-tx7", points=70)
+    await _set_code_requested(store)
 
     out = await handle_message(PHONE_A, "sim", store, session_factory)
     # Tratado como código (inexistente), não como novo "sim".
@@ -589,6 +598,44 @@ async def test_affiliate_yes_after_code_requested_is_treated_as_code(
     state = await store.get(normalize_phone(PHONE_A))
     assert state is not None
     assert state.step is ConversationStep.AWAITING_AFFILIATE_CODE
+
+
+@pytest.mark.integration
+async def test_affiliate_question_outside_window_is_ignored(
+    session, session_factory, store
+):
+    """Pergunta mais velha que a janela não captura um "sim" solto: vai ao menu."""
+    customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
+    customer_id = customer.id
+    await _seed_affiliate(session)
+    window = get_settings().affiliate_answer_window_days
+    await _seed_question(
+        session, customer_id, "WACONV-tx8", points=60, age_days=window + 1
+    )
+
+    out = await handle_message(PHONE_A, "sim", store, session_factory)
+    assert out == [messages.menu()]
+    assert await store.get(normalize_phone(PHONE_A)) is None
+    assert await _question_status(session, "WACONV-tx8") is (
+        AffiliateQuestionStatus.PENDING
+    )
+
+
+@pytest.mark.integration
+async def test_affiliate_pending_question_does_not_hijack_balance(
+    session, session_factory, store
+):
+    """Com pergunta pendente, "saldo" continua sendo saldo."""
+    customer = await _seed_customer(session, WA_DOCS[0], phone=PHONE_A)
+    customer_id = customer.id
+    await _seed_affiliate(session)
+    await _seed_question(session, customer_id, "WACONV-tx9", points=40)
+
+    out = await handle_message(PHONE_A, "saldo", store, session_factory)
+    assert out == [messages.balance(40)]
+    assert await _question_status(session, "WACONV-tx9") is (
+        AffiliateQuestionStatus.PENDING
+    )
 
 
 @pytest.mark.integration

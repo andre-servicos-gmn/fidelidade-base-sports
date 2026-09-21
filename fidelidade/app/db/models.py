@@ -69,6 +69,14 @@ class AffiliateType(str, PyEnum):
     INFLUENCER = "INFLUENCER"
 
 
+class AffiliateQuestionStatus(str, PyEnum):
+    """Situação da pergunta "veio por indicação?" feita após uma compra."""
+
+    PENDING = "PENDING"
+    ATTRIBUTED = "ATTRIBUTED"
+    DECLINED = "DECLINED"
+
+
 # Reaproveitado por colunas com timezone.
 _TZ = TIMESTAMP(timezone=True)
 
@@ -375,3 +383,52 @@ class AffiliateAttribution(Base):
     created_at: Mapped[datetime] = mapped_column(
         _TZ, server_default=func.now(), nullable=False
     )
+
+
+class AffiliateQuestion(Base):
+    """A pergunta "veio por indicação?" feita ao cliente após UMA compra.
+
+    Por que no banco, e não no estado da conversa: a pergunta sai como template
+    e o cliente pode responder horas depois, quando já saiu da loja. O estado da
+    conversa expira em minutos e mora na memória do processo — qualquer deploy
+    apaga. Quando a resposta chegava tarde, o "Sim" caía no menu e a indicação
+    se perdia para sempre (a pergunta não é regerada: a compra já foi creditada
+    e o ledger é idempotente).
+
+    Guardamos aqui também o valor da compra, que o ledger não tem e é a base da
+    comissão do afiliado.
+
+    `source_reference` é ÚNICO: uma pergunta por compra, mesmo com o polling
+    relendo a mesma transação em janelas sobrepostas.
+    """
+
+    __tablename__ = "affiliate_questions"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_reference", name="uq_affiliate_question_source_reference"
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    customer_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("customers.id"),
+        index=True,
+        nullable=False,
+    )
+    source_reference: Mapped[str] = mapped_column(String, nullable=False)
+    # Pontos do cliente e valor da compra (R$), copiados na criação: é o que a
+    # atribuição grava quando o código chegar.
+    points: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    status: Mapped[AffiliateQuestionStatus] = mapped_column(
+        Enum(AffiliateQuestionStatus, name="affiliate_question_status"),
+        default=AffiliateQuestionStatus.PENDING,
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        _TZ, server_default=func.now(), nullable=False
+    )
+    answered_at: Mapped[datetime | None] = mapped_column(_TZ, nullable=True)

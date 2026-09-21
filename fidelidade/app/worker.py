@@ -16,15 +16,13 @@ escapa "no vão" entre dois ciclos. A idempotência (constraint única em
 `LedgerEntry.source_reference`) garante que a sobreposição não credite pontos
 repetidos — por isso NÃO precisamos persistir um checkpoint de "até onde li".
 
-Estado compartilhado (importante)
----------------------------------
-O worker usa EXATAMENTE o mesmo `session_store` e `message_sender` da API
-(`app.dependencies`), que são singletons de processo. Rodar o worker no MESMO
-processo da API (`RUN_WORKER_IN_APP=true`) faz o `dispatch` gravar o estado
-`AWAITING_AFFILIATE_CODE` no mesmo store que o webhook lê ao receber a resposta
-do cliente. Para rodar o worker em processo separado, ligue o Redis
-(`USE_REDIS_SESSION_STORE=true`) — só assim o estado gravado aqui casa com o
-webhook do outro processo.
+Estado compartilhado
+--------------------
+O worker não grava estado de conversa. A pergunta de indicação fica no banco
+(`affiliate_questions`, criada na ingestão), e é lá que o webhook a encontra
+quando o cliente responde — mesmo horas depois, mesmo após um deploy. Por isso
+o worker pode rodar no processo da API (`RUN_WORKER_IN_APP=true`) ou à parte
+(`python -m app.worker`) sem que a resposta do cliente se perca.
 """
 
 from __future__ import annotations
@@ -34,7 +32,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from app.config import get_settings
-from app.dependencies import get_message_sender, get_session_factory, get_session_store
+from app.dependencies import get_message_sender, get_session_factory
 from app.integrations.touchpay.client import TouchPayClient
 from app.services.ingestion_service import IngestionReport, ingest_transactions
 from app.whatsapp.affiliate_prompt import dispatch_affiliate_prompts
@@ -65,16 +63,12 @@ async def run_once(touchpay_client: TouchPayClient) -> IngestionReport:
             max_date=now,
         )
 
-    # Dispara as perguntas de afiliado FORA da sessão de ingestão: envolve I/O
-    # de rede (WhatsApp) e grava no session_store (não no banco). Usa os mesmos
-    # singletons da API para o estado casar com o webhook.
+    # Dispara as perguntas de afiliado FORA da sessão de ingestão: é I/O de rede
+    # (WhatsApp), e as perguntas já estão gravadas no banco pela ingestão.
     sent = 0
     if report.affiliate_prompts:
         sender = get_message_sender()
-        store = get_session_store()
-        sent = await dispatch_affiliate_prompts(
-            report.affiliate_prompts, sender, store
-        )
+        sent = await dispatch_affiliate_prompts(report.affiliate_prompts, sender)
 
     logger.info(
         "ciclo de polling: lidas=%d creditadas=%d ja_processadas=%d "

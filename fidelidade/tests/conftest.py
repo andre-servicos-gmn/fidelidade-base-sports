@@ -19,6 +19,12 @@ Quando `TEST_DATABASE_URL` existe, ela sobrepõe `DATABASE_URL` para o processo
 inteiro de teste: as fixtures leem `get_settings().database_url`, então basta
 plantar o valor no ambiente (que vence o `.env`) e invalidar o cache de
 `get_settings`.
+
+Sem ela, `DATABASE_URL` aponta para um endereço que não existe. Pular os testes
+marcados não bastava: todo teste que sobe o app com `TestClient` dispara o
+lifespan, e com `RUN_WORKER_IN_APP=true` no `.env` o worker de polling ligava e
+se conectava ao banco de produção. Por isso o worker também fica sempre
+desligado nos testes — quem testa o worker chama `run_once` direto.
 =============================================================================
 """
 
@@ -39,18 +45,20 @@ _SKIP_REASON = (
 )
 
 
+# Porta 1 em localhost: conexão recusada na hora, nunca um banco de verdade.
+_UNREACHABLE_DATABASE_URL = "postgresql+asyncpg://nobody:x@127.0.0.1:1/none"
+
+
 def _test_database_url() -> str:
     return os.getenv(TEST_DB_ENV, "").strip()
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Redireciona a aplicação para o banco de teste, quando houver um."""
-    url = _test_database_url()
-    if not url:
-        return
+    """Isola a aplicação do banco de produção durante os testes."""
     # Variável de ambiente vence o `.env` no pydantic-settings; limpar o cache
     # garante que ninguém já tenha lido o valor antigo.
-    os.environ["DATABASE_URL"] = url
+    os.environ["RUN_WORKER_IN_APP"] = "false"
+    os.environ["DATABASE_URL"] = _test_database_url() or _UNREACHABLE_DATABASE_URL
     get_settings.cache_clear()
 
 

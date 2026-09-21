@@ -93,7 +93,7 @@ def test_redeem_wins_over_coupons_when_both_present():
 # --------------------------------------------------------------------------- #
 # Saída do passo de escolha de recompensa                                      #
 # --------------------------------------------------------------------------- #
-async def test_other_intent_escapes_reward_choice_step():
+async def test_other_intent_escapes_reward_choice_step(monkeypatch):
     """Dentro da escolha de recompensa, pedir OUTRA coisa deve ser atendido.
 
     Antes, "meus cupons" no meio da escolha respondia "Não entendi a opção" e
@@ -101,7 +101,7 @@ async def test_other_intent_escapes_reward_choice_step():
     """
     from contextlib import asynccontextmanager
 
-    from app.whatsapp import messages
+    from app.whatsapp import conversation, messages
     from app.whatsapp.conversation import handle_message
     from app.whatsapp.session_store import (
         ConversationState,
@@ -138,6 +138,15 @@ async def test_other_intent_escapes_reward_choice_step():
     @asynccontextmanager
     async def _factory():
         yield _Session()
+
+    # A sessão fake devolve o cliente para QUALQUER consulta; sem isto ele
+    # viraria também uma "pergunta de indicação pendente".
+    async def _no_pending_question(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(
+        conversation, "get_pending_affiliate_question", _no_pending_question
+    )
 
     store = InMemorySessionStore()
     # Cliente está escolhendo a recompensa.
