@@ -73,6 +73,25 @@ class Settings(BaseSettings):
     meta_affiliate_template: str = ""
     # Código de idioma do template, exatamente como cadastrado na Meta.
     meta_template_language: str = "pt_BR"
+    # Repasse ao sistema de BOAS-VINDAS (saudação por voz na Alexa). A loja usa
+    # o MESMO número nos dois sistemas, e a Meta entrega os eventos a UM
+    # callback só — este. O boas-vindas pede consentimento LGPD por template
+    # com botões; sem repasse, o toque do cliente em "Aceito" nunca chega lá.
+    #
+    # URL COMPLETA do webhook do boas-vindas. Carrega o segredo de caminho
+    # dele: só por variável de ambiente, nunca em código nem em log.
+    # Vazio = não repassa.
+    boasvindas_forward_url: str = ""
+    # Curto de propósito: o repasse roda depois do 200 à Meta, mas um outro
+    # sistema lento não pode ficar segurando conexão daqui.
+    boasvindas_forward_timeout_seconds: float = 3.0
+    # Payloads dos botões do template do boas-vindas, separados por vírgula
+    # (sem diferenciar maiúsculas, espaços ignorados). Só eventos com um desses
+    # toques são repassados — minimização: o boas-vindas não precisa ver as
+    # conversas com o robô de fidelidade. E esses toques NUNCA entram na
+    # conversa daqui, com o repasse ligado ou não. Vazio = nenhum botão é
+    # reconhecido (nada repassado, nada filtrado).
+    boasvindas_button_payloads: str = "ACEITO,NAO_ACEITO"
 
     # --- Estado conversacional (SessionStore) ---
     # Connection string do Redis. Upstash/Redis Cloud usam TLS -> `rediss://`

@@ -142,6 +142,26 @@ estado" (o cliente vê o menu) em vez de o webhook estourar 500.
 #   pytest -m integration            (roda os testes contra o Redis real)
 ```
 
+## WhatsApp Cloud API: repasse ao sistema de boas-vindas
+
+O número da loja serve a dois sistemas — este e o de boas-vindas (saudação por
+voz), que pede consentimento por template com os botões `ACEITO`/`NAO_ACEITO`
+— e a Meta entrega tudo a um callback só: `/webhook/meta`. Por isso o evento
+com toque nesses botões é repassado ao boas-vindas (bytes crus + assinatura,
+depois do 200, sem nunca derrubar o webhook). Só esse evento: as conversas com
+o robô de fidelidade não saem daqui. E o toque nunca entra na conversa daqui,
+com o repasse ligado ou não — "Aceito" contaria como "sim" do onboarding.
+
+| Variável                             | Default             | Descrição                                                         |
+| ------------------------------------ | ------------------- | ----------------------------------------------------------------- |
+| `BOASVINDAS_FORWARD_URL`             | `""`                | URL completa do webhook do boas-vindas. **Contém segredo.** Vazio = não repassa. |
+| `BOASVINDAS_FORWARD_TIMEOUT_SECONDS` | `3.0`               | Timeout do repasse.                                               |
+| `BOASVINDAS_BUTTON_PAYLOADS`         | `ACEITO,NAO_ACEITO` | Payloads dos botões do boas-vindas (vírgula, sem diferenciar maiúsculas). |
+
+O repasse leva o cabeçalho `X-Boasvindas-Repassado`; um evento que já chega
+com ele não é repassado de novo, então os dois sistemas nunca ficam num laço.
+Código em `app/whatsapp/meta/boasvindas.py`.
+
 ## Agendador de polling (worker de ingestão)
 
 A API TouchPay não avisa quando há uma compra — só responde quando perguntamos.
