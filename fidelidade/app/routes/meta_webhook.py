@@ -7,7 +7,8 @@ separados deixam os dois canais conviverem: dá para cadastrar e testar a Meta
 sem derrubar o que já roda, e voltar atrás sem downtime.
 
 A lógica de conversa é EXATAMENTE a mesma (`handle_message`). Este módulo é só
-tradução de fronteira.
+tradução de fronteira — mais a separação dos toques do sistema de boas-vindas,
+que divide o número com este (ver `app.whatsapp.meta.boasvindas`).
 """
 
 from __future__ import annotations
@@ -15,7 +16,14 @@ from __future__ import annotations
 import hmac
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+)
 from fastapi.responses import PlainTextResponse
 
 from app.config import get_settings
@@ -26,6 +34,12 @@ from app.dependencies import (
 )
 from app.whatsapp.conversation import handle_message
 from app.whatsapp.evolution.sender import MessageSender
+from app.whatsapp.meta.boasvindas import (
+    contains_boasvindas_tap,
+    is_boasvindas_payload,
+    normalize_payloads,
+    repassar,
+)
 from app.whatsapp.meta.phone import meta_to_canonical
 from app.whatsapp.meta.signature import verify_signature
 from app.whatsapp.meta.webhook_schema import MetaWebhook
@@ -118,6 +132,7 @@ async def verify_webhook(
 @router.post("/webhook/meta/{path_secret}")
 async def receive_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     path_secret: str | None = None,
     sender: MessageSender = Depends(get_message_sender),
     store: SessionStore = Depends(get_session_store),
@@ -149,13 +164,46 @@ async def receive_webhook(
         logger.exception("payload da Meta ilegível; ignorando")
         return {"status": "ignored"}
 
+    # BOAS-VINDAS: o outro sistema da loja usa este mesmo número e pede
+    # consentimento por template com botões. A Meta só chama a nós, então o
+    # evento com esse toque é repassado a ele.
+    # - Só DEPOIS da autenticação: nunca repassar o que nós mesmos recusaríamos.
+    # - Só o lote que tem o toque: as conversas com o robô de fidelidade não
+    #   saem daqui (minimização).
+    # - Em BackgroundTasks: roda depois do 200, então um boas-vindas lento ou
+    #   fora do ar nunca atrasa a resposta — e a Meta reenvia o que demora.
+    payloads_boasvindas = normalize_payloads(settings.boasvindas_button_payloads)
+    repassado = False
+    if settings.boasvindas_forward_url.strip() and contains_boasvindas_tap(
+        payload, payloads_boasvindas
+    ):
+        background_tasks.add_task(
+            repassar,
+            settings.boasvindas_forward_url,
+            raw,  # bytes CRUS: a assinatura só bate sobre eles
+            request.headers,
+            settings.boasvindas_forward_timeout_seconds,
+        )
+        repassado = True
+
     # A Meta AGRUPA eventos: um POST pode trazer várias mensagens, de clientes
     # diferentes. Todas precisam ser atendidas — o 200 faz ela considerar o
     # lote inteiro entregue, sem reenvio.
-    incoming = payload.extract_text_messages()
+    #
+    # Menos os toques do boas-vindas, com o repasse ligado ou NÃO: o botão
+    # "Aceito" é consentimento para a saudação por voz, não resposta a este
+    # robô. Na conversa, "aceito" é um "sim" do onboarding — e contaria como
+    # aceite do regulamento da fidelidade. As demais mensagens do lote seguem.
+    incoming = [
+        mensagem
+        for mensagem in payload.extract_text_messages()
+        if not is_boasvindas_payload(mensagem.button_payload, payloads_boasvindas)
+    ]
     if not incoming:
-        # Status de entrega, mídia, reação: nada a fazer.
-        return {"status": "ignored"}
+        # Status de entrega, mídia, reação, toque do boas-vindas: nada a fazer
+        # aqui. "forwarded" só diz que o repasse foi AGENDADO; o resultado dele
+        # sai no log, porque roda depois desta resposta.
+        return {"status": "forwarded" if repassado else "ignored"}
 
     replies_total = 0
     sent = 0

@@ -16,7 +16,9 @@ Tipos de mensagem tratados:
   máquina de conversa já entende "1"/"2"/"Consultar saldo".
 - `button`      -> resposta de botão de TEMPLATE. Formato distinto do de cima
   (ver `MetaButton`); é o que chega quando o cliente responde à pergunta de
-  afiliado pós-compra.
+  afiliado pós-compra. Também é o formato do pedido de consentimento do
+  sistema de boas-vindas, que usa o mesmo número: esses toques são separados
+  no webhook pelo `button_payload` e não viram conversa daqui.
 
 Qualquer outra coisa (áudio, imagem, status, reação) devolve None e o webhook
 ignora sem erro.
@@ -39,6 +41,11 @@ class IncomingTextMessage:
     text: str
     contact_name: str | None = None
     message_id: str | None = None
+    # Identificador do botão tocado (payload de template ou id de botão
+    # interativo), quando a mensagem é um toque. Diferente de `text`, que é o
+    # RÓTULO: é por aqui que o webhook reconhece os botões do boas-vindas, que
+    # não são conversa deste sistema (ver `app.whatsapp.meta.boasvindas`).
+    button_payload: str | None = None
 
 
 class MetaText(BaseModel):
@@ -120,6 +127,20 @@ class MetaMessage(BaseModel):
             return self.button.resolved_text()
         return None
 
+    def button_payload(self) -> str | None:
+        """Identificador ESTÁVEL do botão tocado, ou None se não foi toque.
+
+        O rótulo visível pode mudar com o texto do template; o payload (ou o
+        id, no botão interativo) é o que quem enviou definiu para reconhecer a
+        resposta. Os dois formatos da Meta, como em `resolved_text`.
+        """
+        if self.button is not None and self.button.payload:
+            return self.button.payload
+        reply = self.interactive.button_reply if self.interactive else None
+        if reply is not None and reply.id:
+            return reply.id
+        return None
+
 
 class MetaContact(BaseModel):
     model_config = _TOLERANT
@@ -186,6 +207,7 @@ class MetaWebhook(BaseModel):
                                 text=texto,
                                 contact_name=nome,
                                 message_id=message.id,
+                                button_payload=message.button_payload(),
                             )
                         )
         return encontradas
