@@ -174,17 +174,24 @@ async def receive_webhook(
     #   fora do ar nunca atrasa a resposta — e a Meta reenvia o que demora.
     payloads_boasvindas = normalize_payloads(settings.boasvindas_button_payloads)
     repassado = False
-    if settings.boasvindas_forward_url.strip() and contains_boasvindas_tap(
-        payload, payloads_boasvindas
-    ):
-        background_tasks.add_task(
-            repassar,
-            settings.boasvindas_forward_url,
-            raw,  # bytes CRUS: a assinatura só bate sobre eles
-            request.headers,
-            settings.boasvindas_forward_timeout_seconds,
-        )
-        repassado = True
+    if contains_boasvindas_tap(payload, payloads_boasvindas):
+        if settings.boasvindas_forward_url.strip():
+            background_tasks.add_task(
+                repassar,
+                settings.boasvindas_forward_url,
+                raw,  # bytes CRUS: a assinatura só bate sobre eles
+                request.headers,
+                settings.boasvindas_forward_timeout_seconds,
+            )
+            repassado = True
+        else:
+            # O toque vai ser descartado (fica fora da conversa, logo abaixo) e
+            # não sai daqui. Sem esta linha, variável vazia ou com nome errado
+            # no painel fica igual a "a Meta nunca chamou", e um NAO_ACEITO
+            # (revogação) some sem rastro. Sem telefone, sem URL.
+            logger.warning(
+                "toque do boas-vindas descartado: BOASVINDAS_FORWARD_URL vazio"
+            )
 
     # A Meta AGRUPA eventos: um POST pode trazer várias mensagens, de clientes
     # diferentes. Todas precisam ser atendidas — o 200 faz ela considerar o

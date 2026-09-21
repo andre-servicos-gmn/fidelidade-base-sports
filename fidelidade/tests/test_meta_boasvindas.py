@@ -274,6 +274,42 @@ async def test_repassar_never_raises_and_never_logs_the_url(erro, caplog):
     assert "exemplo.invalid" not in caplog.text
 
 
+async def test_repassar_success_never_logs_the_url_even_with_httpx_at_info(caplog):
+    """No caminho de SUCESSO quem loga é o próprio httpx, não este módulo.
+
+    O httpx grava em INFO `HTTP Request: POST <URL completa> ...` a cada
+    chamada que volta. Basta alguém ligar o INFO (um `basicConfig`, como o do
+    worker) para o segredo do boas-vindas ir parar no log. O teste de erro
+    acima não pega isso: quando a chamada levanta, o httpx não emite a linha.
+    """
+    outro = _OutroSistema()
+    with caplog.at_level(logging.DEBUG):
+        async with outro.client() as client:
+            resultado = await repassar(FORWARD_URL, b"{}", {}, 3.0, client=client)
+
+    assert resultado == "ok"
+    # Garante que o teste passou pelo ponto do vazamento: o httpx LOGOU a
+    # chamada (se uma versão futura parar de logar, este teste perde o sentido
+    # e precisa ser revisto, não apagado às cegas).
+    assert any(r.name == "httpx" for r in caplog.records)
+    assert "segredo-de-teste" not in caplog.text
+    assert "exemplo.invalid" not in caplog.text
+    # O sucesso aparece no log do app — sem URL.
+    assert "repasse ao boas-vindas: ok" in caplog.text
+
+
+async def test_masking_does_not_touch_other_httpx_calls(caplog):
+    """Só a URL do repasse é escondida; as outras chamadas do app seguem iguais."""
+    outro = _OutroSistema()
+    with caplog.at_level(logging.INFO):
+        async with outro.client() as client:
+            await repassar(FORWARD_URL, b"{}", {}, 3.0, client=client)
+            await client.get("https://outra-api.invalid/saldo")
+
+    assert "https://outra-api.invalid/saldo" in caplog.text
+    assert "segredo-de-teste" not in caplog.text
+
+
 async def test_repassar_closes_only_the_client_it_created(monkeypatch):
     """Cliente próprio é fechado; o recebido de fora continua com quem o deu."""
     criados: list[httpx.AsyncClient] = []
@@ -515,6 +551,36 @@ def test_without_forward_url_nothing_is_sent_and_tap_is_still_filtered(
     assert r.json() == {"status": "ignored"}
     assert outro_sistema.recebidos == []
     assert conversa == []
+
+
+def test_without_forward_url_the_dropped_tap_leaves_a_warning(
+    client, outro_sistema, conversa, monkeypatch, caplog
+):
+    """Variável vazia ou com nome errado no EasyPanel não pode ser silenciosa.
+
+    Sem esta linha, "faltou a URL de repasse" fica igual a "a Meta nunca nos
+    chamou", e um NAO_ACEITO (revogação) some sem rastro. Sem telefone no log.
+    """
+    monkeypatch.setenv("BOASVINDAS_FORWARD_URL", "")
+    get_settings.cache_clear()
+
+    with caplog.at_level(logging.WARNING, logger="fidelidade.meta_webhook"):
+        _post(client, _envelope(_template_button("NAO_ACEITO", frm="5511900000001")))
+
+    avisos = [r for r in caplog.records if r.name == "fidelidade.meta_webhook"]
+    assert len(avisos) == 1
+    assert avisos[0].levelno == logging.WARNING
+    assert "BOASVINDAS_FORWARD_URL" in avisos[0].getMessage()
+    assert "900000001" not in caplog.text
+
+
+def test_with_forward_url_there_is_no_dropped_tap_warning(
+    client, outro_sistema, conversa, caplog
+):
+    with caplog.at_level(logging.WARNING, logger="fidelidade.meta_webhook"):
+        _post(client, _envelope(_template_button("ACEITO")))
+
+    assert not [r for r in caplog.records if r.name == "fidelidade.meta_webhook"]
 
 
 def test_route_does_not_bounce_an_event_that_came_forwarded(
