@@ -23,12 +23,29 @@ Tela de celular é estreita e o cliente LÊ EM DIAGONAL. Então:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
 from app.db.models import CouponDiscountType, CouponStatus
 from app.domain.redemption import RedemptionResult
+
+# Horário de Brasília. Fixo em -03:00: o Brasil não tem horário de verão desde
+# 2019 (e assim não dependemos do pacote de fusos no container).
+_BRT = timezone(timedelta(hours=-3))
+
+
+def _date_br(value: datetime) -> str:
+    """Data no calendário de Brasília, "dd/mm/aaaa".
+
+    O banco devolve as datas em UTC. Um cupom que vence às 23:59 de 31/12 em
+    Brasília é 02:59 de 01/01 em UTC; formatar direto mostrava ao cliente um
+    dia a mais do que o cupom real vale.
+    """
+    if value.tzinfo is not None:
+        value = value.astimezone(_BRT)
+    return value.strftime("%d/%m/%Y")
+
 
 _BRAND = "Base Sports"
 _CLUB = "Base Club"
@@ -312,7 +329,7 @@ def invalid_choice() -> str:
 def redemption_success(result: RedemptionResult) -> str:
     """O código fica ISOLADO: é o que o cliente precisa achar e copiar no caixa."""
     valor = _format_discount(result.discount_type, result.discount_value)
-    validade = result.expires_at.strftime("%d/%m/%Y")
+    validade = _date_br(result.expires_at)
     condicao = _min_condition(result.min_order_value)
 
     linhas = [f"Desconto: {valor}", f"Validade: {validade}"]
@@ -361,7 +378,7 @@ def coupons_list(coupons: list[dict[str, Any]]) -> str:
         detalhes = [valor]
         if c.get("expires_at") is not None:
             expires: datetime = c["expires_at"]
-            detalhes.append(f"vale até {expires.strftime('%d/%m/%Y')}")
+            detalhes.append(f"vale até {_date_br(expires)}")
 
         linhas = [f"*{c['code']}* - {status}", " · ".join(detalhes)]
         condicao = _min_condition(c.get("min_order_value"))

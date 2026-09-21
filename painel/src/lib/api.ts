@@ -258,6 +258,7 @@ export const api = {
     discount_value: string;
     points_cost: number;
     min_order_value: string | null;
+    expires_at: string | null;
   }) =>
     request<CouponBatchResult>("/admin/coupons", {
       method: "POST",

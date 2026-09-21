@@ -11,9 +11,12 @@ from __future__ import annotations
 import io
 import logging
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
+from app.domain.redemption import RedemptionResult
 from app.logging_config import configure_logging
 from app.services.redemption_service import coupon_expiry
+from app.whatsapp import messages
 
 NOW = datetime(2026, 9, 21, 12, 0, tzinfo=timezone.utc)
 
@@ -86,3 +89,45 @@ def test_registered_expiry_later_than_default_is_kept():
 
 def test_default_applies_only_without_registered_expiry():
     assert coupon_expiry(None, NOW, expiration_days=30) == NOW + timedelta(days=30)
+
+
+# --------------------------------------------------------------------------- #
+# Data mostrada ao cliente                                                     #
+# --------------------------------------------------------------------------- #
+# O painel grava "válido até 31/12, 23:59 de Brasília", que no banco vira
+# 02:59 de 01/01 em UTC. Formatar sem converter mostrava um dia a mais.
+_FIM_DO_ANO_EM_UTC = datetime(2027, 1, 1, 2, 59, 59, tzinfo=timezone.utc)
+
+
+def test_redemption_message_shows_brasilia_date():
+    result = RedemptionResult(
+        coupon_code="BASE-R25-0001",
+        discount_type="FIXED",
+        discount_value=Decimal("25.00"),
+        points_spent=500,
+        balance_after=100,
+        expires_at=_FIM_DO_ANO_EM_UTC,
+        min_order_value=None,
+    )
+
+    texto = messages.redemption_success(result)
+
+    assert "31/12/2026" in texto
+    assert "01/01/2027" not in texto
+
+
+def test_coupons_list_shows_brasilia_date():
+    texto = messages.coupons_list(
+        [
+            {
+                "code": "BASE-R25-0001",
+                "discount_type": "FIXED",
+                "discount_value": 25.0,
+                "status": "ALLOCATED",
+                "expires_at": _FIM_DO_ANO_EM_UTC,
+                "min_order_value": None,
+            }
+        ]
+    )
+
+    assert "vale até 31/12/2026" in texto

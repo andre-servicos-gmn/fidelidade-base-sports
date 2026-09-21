@@ -8,6 +8,7 @@ import {
 } from "../lib/api";
 import {
   formatBRL,
+  formatDate,
   formatDiscount,
   formatPoints,
   humanizeStatus,
@@ -188,6 +189,11 @@ export function CouponsPage() {
                         válido acima de {formatBRL(c.min_order_value)}
                       </div>
                     )}
+                    {c.expires_at != null && (
+                      <div className="subtle">
+                        vence em {formatDate(c.expires_at)}
+                      </div>
+                    )}
                   </td>
                   <td className="right num">{formatPoints(c.points_cost)} pts</td>
                   <td>
@@ -229,6 +235,14 @@ export function CouponsPage() {
 }
 
 /* -------------------------------------------------------------------------- */
+/** Hoje no fuso de quem está usando o painel, como "AAAA-MM-DD" (o valor do input date). */
+function todayISODate(): string {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
 function CreateCouponsModal({
   onClose,
   onSaved,
@@ -241,6 +255,7 @@ function CreateCouponsModal({
   const [discountValue, setDiscountValue] = useState("10");
   const [pointsCost, setPointsCost] = useState("500");
   const [minOrder, setMinOrder] = useState("");
+  const [expiresOn, setExpiresOn] = useState("");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [apiError, setApiError] = useState<string | null>(null);
   const [result, setResult] = useState<{ created: number; skipped: number } | null>(
@@ -272,6 +287,17 @@ function CreateCouponsModal({
         e.minOrder = "Se informar, o mínimo deve ser maior que zero.";
       else minValue = m.toFixed(2);
     }
+
+    // Validade do cupom REAL na TouchPay. Vale até o fim do dia escolhido, no
+    // horário de Brasília (sem horário de verão desde 2019, então -03:00 fixo).
+    // Vazio = sem validade cadastrada: no resgate o cliente recebe o prazo
+    // padrão de 30 dias, que pode não bater com o cupom real.
+    let expiresAt: string | null = null;
+    if (expiresOn) {
+      if (expiresOn < todayISODate())
+        e.expiresOn = "A validade não pode estar no passado.";
+      else expiresAt = `${expiresOn}T23:59:59-03:00`;
+    }
     setErrors(e);
     if (Object.keys(e).length > 0) return;
 
@@ -283,6 +309,7 @@ function CreateCouponsModal({
         discount_value: value.toFixed(2),
         points_cost: cost,
         min_order_value: minValue,
+        expires_at: expiresAt,
       });
       setResult({ created: res.created.length, skipped: res.skipped.length });
     } catch (err) {
@@ -396,6 +423,20 @@ function CreateCouponsModal({
           />
         </Field>
       </div>
+
+      <Field
+        label="Validade — recomendado"
+        hint="A mesma data de vencimento do cupom na TouchPay. É a que o cliente recebe no resgate. Sem ela, ele recebe 30 dias, que pode não bater com o cupom real."
+        error={errors.expiresOn}
+      >
+        <TextInput
+          type="date"
+          min={todayISODate()}
+          value={expiresOn}
+          onChange={(e) => setExpiresOn(e.target.value)}
+          invalid={!!errors.expiresOn}
+        />
+      </Field>
 
       {apiError && (
         <Banner tone="warn" icon="!">
