@@ -5,6 +5,7 @@ import type {
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
+import { IconAlert, IconCheck, IconClose, IconInfo } from "./icons";
 
 /* ----- Button ------------------------------------------------------------ */
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -12,12 +13,15 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: "md" | "sm";
   block?: boolean;
   loading?: boolean;
+  /** Ícone à esquerda do texto (ex.: <IconPlus />). */
+  icon?: ReactNode;
 };
 export function Button({
   variant = "primary",
   size = "md",
   block,
   loading,
+  icon,
   children,
   className = "",
   disabled,
@@ -34,7 +38,7 @@ export function Button({
     .join(" ");
   return (
     <button className={cls} disabled={disabled || loading} {...rest}>
-      {loading && <span className="spinner" aria-hidden />}
+      {loading ? <span className="spinner" aria-hidden /> : icon}
       {children}
     </button>
   );
@@ -117,7 +121,6 @@ export function Toggle({
       onClick={() => !disabled && onChange(!checked)}
       aria-pressed={checked}
       disabled={disabled}
-      style={disabled ? { opacity: 0.6, cursor: "not-allowed" } : undefined}
     >
       <span className={`toggle-track ${checked ? "on" : ""}`}>
         <span className="toggle-knob" />
@@ -145,13 +148,18 @@ export function Banner({
   children,
 }: {
   tone?: "info" | "warn" | "neutral";
-  icon?: string;
+  /** Padrão: alerta no tom "warn", info nos demais. */
+  icon?: "info" | "alert" | "check";
   children: ReactNode;
 }) {
-  const fallback = tone === "warn" ? "!" : "i";
+  const kind = icon ?? (tone === "warn" ? "alert" : "info");
+  const Glyph =
+    kind === "alert" ? IconAlert : kind === "check" ? IconCheck : IconInfo;
   return (
-    <div className={`banner banner-${tone}`}>
-      <span className="banner-icon">{icon ?? fallback}</span>
+    <div className={`banner banner-${tone}`} role={tone === "warn" ? "alert" : undefined}>
+      <span className="banner-icon">
+        <Glyph size={18} />
+      </span>
       <div>{children}</div>
     </div>
   );
@@ -183,7 +191,7 @@ export function EmptyState({
     <div className="empty">
       <div className="empty-title">{title}</div>
       {message && <p>{message}</p>}
-      {action && <div style={{ marginTop: 16 }}>{action}</div>}
+      {action && <div className="empty-action">{action}</div>}
     </div>
   );
 }
@@ -202,11 +210,17 @@ export function Modal({
 }) {
   return (
     <div className="modal-overlay" onMouseDown={onClose}>
-      <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Fechar">
-            ×
+            <IconClose size={20} />
           </button>
         </div>
         <div className="modal-body">{children}</div>

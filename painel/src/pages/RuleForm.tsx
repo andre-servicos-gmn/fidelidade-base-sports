@@ -307,15 +307,15 @@ export function RuleForm({ rule, onClose, onSaved }: Props) {
       )}
 
       {ruleType !== "BASE" && (
-        <Banner tone="warn" icon="!">
+        <Banner tone="warn">
           Atenção: esta regra afeta os pontos de todas as compras processadas a
           partir de agora.
         </Banner>
       )}
 
       {apiError && (
-        <div style={{ marginTop: 12 }}>
-          <Banner tone="warn" icon="!">
+        <div className="mt-3">
+          <Banner tone="warn">
             {apiError}
           </Banner>
         </div>

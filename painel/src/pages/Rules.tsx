@@ -9,6 +9,7 @@ import {
   Loading,
   Toggle,
 } from "../components/ui";
+import { IconEdit, IconPlus } from "../components/icons";
 import { RuleForm } from "./RuleForm";
 
 export function RulesPage() {
@@ -85,12 +86,14 @@ export function RulesPage() {
             próximas compras processadas.
           </p>
         </div>
-        <Button onClick={openCreate}>+ Nova regra</Button>
+        <Button icon={<IconPlus />} onClick={openCreate}>
+          Nova regra
+        </Button>
       </div>
 
       {error && (
-        <div style={{ marginBottom: 16 }}>
-          <Banner tone="warn" icon="!">
+        <div className="mb-4">
+          <Banner tone="warn">
             {error}
           </Banner>
         </div>
@@ -105,7 +108,9 @@ export function RulesPage() {
           <EmptyState
             title="Nenhuma regra cadastrada ainda"
             message="Comece criando a regra base (quantos pontos por real)."
-            action={<Button onClick={openCreate}>+ Nova regra</Button>}
+            action={<Button icon={<IconPlus />} onClick={openCreate}>
+          Nova regra
+        </Button>}
           />
         </div>
       ) : (
@@ -141,13 +146,11 @@ export function RulesPage() {
                     </div>
                   </td>
                   <td className="right">
-                    <div
-                      className="row"
-                      style={{ justifyContent: "flex-end", gap: 8 }}
-                    >
+                    <div className="row row-end">
                       <Button
                         variant="ghost"
                         size="sm"
+                        icon={<IconEdit size={15} />}
                         onClick={() => openEdit(rule)}
                       >
                         Editar

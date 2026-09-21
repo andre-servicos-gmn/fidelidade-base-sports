@@ -25,6 +25,7 @@ import {
   TextInput,
   Textarea,
 } from "../components/ui";
+import { IconPlus } from "../components/icons";
 
 const LOW_STOCK = 5; // abaixo disso, alerta em rosa
 
@@ -84,12 +85,14 @@ export function CouponsPage() {
           <h1>Cupons</h1>
           <p>Pool de cupons disponíveis para resgate pelos clientes.</p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>+ Cadastrar cupons</Button>
+        <Button icon={<IconPlus />} onClick={() => setCreateOpen(true)}>
+          Cadastrar cupons
+        </Button>
       </div>
 
       {error && (
-        <div style={{ marginBottom: 16 }}>
-          <Banner tone="warn" icon="!">
+        <div className="mb-4">
+          <Banner tone="warn">
             {error}
           </Banner>
         </div>
@@ -97,34 +100,51 @@ export function CouponsPage() {
 
       {/* Resumo: quantos cupons disponíveis por faixa */}
       {data === null ? (
-        <div className="card" style={{ marginBottom: 24 }}>
+        <div className="card mb-5">
           <Loading label="Carregando resumo…" />
         </div>
       ) : (
         <div className="summary-grid">
           {availableTiers.length === 0 ? (
             <div className="summary-card">
-              <div className="summary-label">Cupons disponíveis</div>
+              <div className="summary-top">
+                <span className="summary-label">Cupons disponíveis</span>
+              </div>
               <div className="summary-value">0</div>
               <div className="summary-meta">Nenhuma faixa cadastrada</div>
             </div>
           ) : (
             availableTiers.map((row) => {
               const low = row.available < LOW_STOCK;
+              const total =
+                row.available + row.allocated + row.used + row.expired;
+              const pct = total > 0 ? (row.available / total) * 100 : 0;
               return (
                 <div
                   key={`${row.discount_value}-${row.points_cost}`}
                   className={`summary-card ${low ? "low" : ""}`}
                 >
-                  <div className="summary-label">
-                    {formatDiscount("FIXED", row.discount_value)}
+                  <div className="summary-top">
+                    <span className="summary-label">
+                      {formatDiscount("FIXED", row.discount_value)}
+                    </span>
+                    {low && <span className="summary-flag">acabando!</span>}
                   </div>
-                  <div className="summary-value">{row.available}</div>
+                  <div className="summary-value">
+                    {row.available}
+                    <span className="summary-unit">disponíveis</span>
+                  </div>
+                  <div
+                    className="summary-bar"
+                    role="img"
+                    aria-label={`${row.available} de ${total} ainda disponíveis`}
+                  >
+                    <span style={{ width: `${pct}%` }} />
+                  </div>
                   <div className="summary-meta">
-                    disponíveis · custa {formatPoints(row.points_cost)} pts
+                    custa {formatPoints(row.points_cost)} pts
                     {row.min_order_value != null &&
                       ` · mín. ${formatBRL(row.min_order_value)}`}
-                    {low && " · acabando!"}
                   </div>
                 </div>
               );
@@ -139,7 +159,7 @@ export function CouponsPage() {
         <Select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          style={{ width: 200 }}
+          className="select-inline"
         >
           <option value="">Todos</option>
           <option value="AVAILABLE">Disponível</option>
@@ -160,8 +180,8 @@ export function CouponsPage() {
             title="Nenhum cupom encontrado"
             message="Cadastre cupons (em lote) para liberá-los ao resgate."
             action={
-              <Button onClick={() => setCreateOpen(true)}>
-                + Cadastrar cupons
+              <Button icon={<IconPlus />} onClick={() => setCreateOpen(true)}>
+                Cadastrar cupons
               </Button>
             }
           />
@@ -181,7 +201,9 @@ export function CouponsPage() {
             <tbody>
               {data.items.map((c) => (
                 <tr key={c.id}>
-                  <td className="strong mono">{c.code}</td>
+                  <td>
+                    <span className="code-chip">{c.code}</span>
+                  </td>
                   <td>
                     {formatDiscount(c.discount_type, c.discount_value)}
                     {c.min_order_value != null && (
@@ -328,7 +350,7 @@ function CreateCouponsModal({
         onClose={onSaved}
         footer={<Button onClick={onSaved}>Concluir</Button>}
       >
-        <Banner tone="info" icon="✓">
+        <Banner tone="info" icon="check">
           {result.created} cupom(ns) cadastrado(s).
           {result.skipped > 0 &&
             ` ${result.skipped} já existia(m) e foram ignorados.`}
@@ -352,14 +374,14 @@ function CreateCouponsModal({
         </>
       }
     >
-      <Banner tone="warn" icon="!">
+      <Banner tone="warn">
         <strong>Importante:</strong> estes códigos precisam ter sido criados
         ANTES no painel da TouchPay/AMLabs. O sistema só registra o código aqui —
         ele <strong>não cria</strong> o cupom no totem. Um código que não exista
         no TouchPay não funcionará para o cliente.
       </Banner>
 
-      <div style={{ height: 16 }} />
+      <div className="gap-4" />
 
       <Field
         label="Códigos dos cupons"
@@ -439,7 +461,7 @@ function CreateCouponsModal({
       </Field>
 
       {apiError && (
-        <Banner tone="warn" icon="!">
+        <Banner tone="warn">
           {apiError}
         </Banner>
       )}

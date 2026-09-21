@@ -9,6 +9,7 @@ import {
   Loading,
   Toggle,
 } from "../components/ui";
+import { IconEdit, IconPlus } from "../components/icons";
 import { AffiliateForm } from "./AffiliateForm";
 
 const EMPTY_STATS = { customers: 0, purchases: 0, points: 0, affiliate_points: 0 };
@@ -96,12 +97,14 @@ export function AffiliatesPage() {
             afiliado.
           </p>
         </div>
-        <Button onClick={openCreate}>+ Novo afiliado</Button>
+        <Button icon={<IconPlus />} onClick={openCreate}>
+          Novo afiliado
+        </Button>
       </div>
 
       {error && (
-        <div style={{ marginBottom: 16 }}>
-          <Banner tone="warn" icon="!">
+        <div className="mb-4">
+          <Banner tone="warn">
             {error}
           </Banner>
         </div>
@@ -116,7 +119,9 @@ export function AffiliatesPage() {
           <EmptyState
             title="Nenhum afiliado cadastrado ainda"
             message="Cadastre um professor ou influencer e gere o código dele."
-            action={<Button onClick={openCreate}>+ Novo afiliado</Button>}
+            action={<Button icon={<IconPlus />} onClick={openCreate}>
+          Novo afiliado
+        </Button>}
           />
         </div>
       ) : (
@@ -142,7 +147,9 @@ export function AffiliatesPage() {
                 <tr key={aff.id}>
                   <td className="strong">{aff.name}</td>
                   <td>{humanizeAffiliateType(aff.affiliate_type)}</td>
-                  <td className="num">{aff.code}</td>
+                  <td>
+                    <span className="code-chip">{aff.code}</span>
+                  </td>
                   <td className="right num">{formatPercent(aff.points_rate)}</td>
                   <td className="right num">{s.customers}</td>
                   <td className="right num">{s.purchases}</td>
@@ -160,13 +167,11 @@ export function AffiliatesPage() {
                     </div>
                   </td>
                   <td className="right">
-                    <div
-                      className="row"
-                      style={{ justifyContent: "flex-end", gap: 8 }}
-                    >
+                    <div className="row row-end">
                       <Button
                         variant="ghost"
                         size="sm"
+                        icon={<IconEdit size={15} />}
                         onClick={() => openEdit(aff)}
                       >
                         Editar

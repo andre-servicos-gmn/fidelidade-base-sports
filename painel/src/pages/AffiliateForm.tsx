@@ -182,8 +182,8 @@ export function AffiliateForm({ affiliate, onClose, onSaved }: Props) {
       </Field>
 
       {apiError && (
-        <div style={{ marginTop: 12 }}>
-          <Banner tone="warn" icon="!">
+        <div className="mt-3">
+          <Banner tone="warn">
             {apiError}
           </Banner>
         </div>

@@ -1,58 +1,81 @@
 /* ========================================================================== *
  *  TOKENS DA MARCA — Base Sports
  *  --------------------------------------------------------------------------
- *  ESTE É O ÚNICO ARQUIVO A EDITAR para trocar as cores da marca.
- *  Quando a Base Sports passar os hex exatos, troque os valores abaixo:
- *    --brand-green-*  -> verde primário (ações, sucesso, ativo)
- *    --brand-pink-*   -> rosa escuro (acento, alertas, destaque de atenção)
- *  Os demais arquivos só consomem estas variáveis, nunca hex direto.
+ *  ESTE É O ÚNICO ARQUIVO COM HEX. Os demais só consomem estas variáveis.
+ *
+ *  Origem dos valores:
+ *    - basesports.com.br (tema Nuvemshop): botão #10AC61, texto #072708,
+ *      fundo #F4F4F4, cabeçalho preto, amarelo #F1FF00, fontes Sora + Inter.
+ *    - Logo (amostrado do PNG): verde neon #11E763, rosa da bolinha #EB4086.
+ *
+ *  Regras de uso:
+ *    - Verde neon e rosa "puros" são cor de DETALHE (barras, pontos, fundos de
+ *      botão). Texto colorido usa sempre as versões *-ink (contraste AA).
+ *    - Amarelo neon só aparece SOBRE PRETO — em fundo claro ele some.
  * ========================================================================== */
 
 :root {
-  /* --- Cores da marca (TROCAR AQUI) ------------------------------------- */
-  --brand-green: #00a35a; /* verde esportivo vivo (primária) */
-  --brand-green-hover: #008a4c;
-  --brand-green-soft: #e6f6ee; /* fundo suave para estados de sucesso/ativo */
-  --brand-green-border: #b9e6cd;
+  /* --- Cores da marca -------------------------------------------------- */
+  --brand-green-neon: #11e763; /* verde do logo: botão primário, destaques */
+  --brand-green: #10ac61; /* verde de botão do site: hover, toggle ligado */
+  --brand-green-ink: #0a7d46; /* verde p/ texto e links (5.2:1 no branco) */
+  --brand-green-deep: #08703f;
+  --brand-green-soft: #e8f7ee; /* fundo suave de sucesso/ativo */
+  --brand-green-border: #b7e8cb;
 
-  --brand-pink: #b11e5e; /* rosa escuro (acento secundário / atenção) */
-  --brand-pink-hover: #97184f;
-  --brand-pink-soft: #fbe9f1;
-  --brand-pink-border: #f0c2d6;
+  --brand-pink: #eb4086; /* rosa da bolinha do logo: barras, pontos */
+  --brand-pink-ink: #b81e60; /* rosa p/ texto (5.4:1 no soft) */
+  --brand-pink-soft: #fdebf3;
+  --brand-pink-border: #f6c3d9;
 
-  /* --- Neutros --------------------------------------------------------- */
-  --color-bg: #f6f7f9; /* fundo da aplicação (cinza muito claro) */
-  --color-surface: #ffffff; /* cards / superfícies */
-  --color-surface-alt: #fbfcfd; /* listras de tabela / áreas sutis */
-  --color-border: #e4e7eb;
-  --color-border-strong: #d4d9df;
+  --brand-black: #0a0a0a; /* cabeçalho do site */
+  --brand-black-2: #161816;
+  --brand-yellow: #f1ff00; /* SÓ sobre preto */
+  --on-black: #ffffff;
+  --on-black-muted: #a3aea4;
 
-  --color-text: #1a1f24; /* texto principal */
-  --color-text-muted: #66707a; /* texto secundário */
-  --color-text-subtle: #97a0a9; /* legendas, placeholders */
+  /* --- Neutros (levemente esverdeados, como o texto do site) ----------- */
+  --color-bg: #f4f4f4;
+  --color-surface: #ffffff;
+  --color-surface-alt: #f8faf8;
+  --color-border: #e3e7e3;
+  --color-border-strong: #cfd6d0;
+
+  --color-text: #072708; /* texto principal do site */
+  --color-text-muted: #56655a;
+  --color-text-subtle: #627064;
+  --color-on-primary: #072708; /* texto sobre o verde neon */
+  --color-white: #ffffff;
 
   /* --- Semânticos ------------------------------------------------------ */
-  --color-primary: var(--brand-green);
-  --color-primary-hover: var(--brand-green-hover);
+  --color-primary: var(--brand-green-neon);
+  --color-primary-hover: var(--brand-green);
   --color-accent: var(--brand-pink);
 
-  --color-danger: #c0392b;
-  --color-danger-soft: #fdecea;
-  --color-warning: #b9770e;
-  --color-warning-soft: #fdf3e3;
+  --color-danger: #b3322e;
+  --color-danger-soft: #fcecea;
+  --color-warning: #8f5a12;
+  --color-warning-soft: #fcf1e2;
+  --color-warning-border: #f0d6b0;
+
+  --color-overlay: rgba(7, 20, 9, 0.5);
+  --color-focus-ring: rgba(17, 231, 99, 0.45);
+  --color-row-hover: #f3faf5;
+  --color-skeleton: #eceeec;
 
   /* --- Tipografia ------------------------------------------------------ */
   --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial,
     sans-serif;
+  --font-display: "Sora", "Inter", system-ui, sans-serif;
 
   /* --- Forma / espaço -------------------------------------------------- */
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 14px;
+  --radius-sm: 4px; /* mesmo raio do site */
+  --radius: 8px;
+  --radius-lg: 12px;
 
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04),
-    0 1px 3px rgba(16, 24, 40, 0.06);
-  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
+  --shadow-sm: 0 1px 2px rgba(7, 39, 8, 0.05);
+  --shadow-md: 0 12px 32px rgba(7, 39, 8, 0.14), 0 2px 6px rgba(7, 39, 8, 0.06);
+  --shadow-knob: 0 1px 3px rgba(7, 39, 8, 0.25);
 
   --space-1: 4px;
   --space-2: 8px;

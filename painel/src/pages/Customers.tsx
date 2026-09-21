@@ -23,6 +23,7 @@ import {
   Loading,
   TextInput,
 } from "../components/ui";
+import { IconArrowLeft, IconArrowRight, IconChevronRight, IconSearch } from "../components/icons";
 
 interface Loaded {
   customer: Customer;
@@ -135,8 +136,12 @@ export function CustomersPage() {
               mascarados.
             </p>
           </div>
-          <Button variant="ghost" onClick={backToList}>
-            ← Voltar para a lista
+          <Button
+            variant="ghost"
+            icon={<IconArrowLeft size={16} />}
+            onClick={backToList}
+          >
+            Voltar para a lista
           </Button>
         </div>
         <CustomerDetail data={data} />
@@ -163,15 +168,18 @@ export function CustomersPage() {
         </div>
       </div>
 
-      <div className="card card-pad" style={{ marginBottom: 24 }}>
-        <form onSubmit={search} className="row" style={{ gap: 12 }}>
-          <TextInput
-            value={cpf}
-            onChange={(e) => setCpf(e.target.value)}
-            placeholder="CPF completo (11 dígitos)"
-            inputMode="numeric"
-            style={{ maxWidth: 280 }}
-          />
+      <div className="card card-pad mb-5">
+        <form onSubmit={search} className="search-form">
+          <label className="search-field">
+            <IconSearch className="search-icon" />
+            <TextInput
+              value={cpf}
+              onChange={(e) => setCpf(e.target.value)}
+              placeholder="CPF completo (11 dígitos)"
+              inputMode="numeric"
+              aria-label="CPF completo"
+            />
+          </label>
           <Button type="submit" loading={searching || detailLoading}>
             Buscar
           </Button>
@@ -179,8 +187,8 @@ export function CustomersPage() {
       </div>
 
       {error && (
-        <div style={{ marginBottom: 16 }}>
-          <Banner tone="warn" icon="!">
+        <div className="mb-4">
+          <Banner tone="warn">
             {error}
           </Banner>
         </div>
@@ -199,8 +207,8 @@ export function CustomersPage() {
         </div>
 
         {listError && (
-          <div style={{ padding: 16 }}>
-            <Banner tone="warn" icon="!">
+          <div className="pad-4">
+            <Banner tone="warn">
               {listError}
             </Banner>
           </div>
@@ -232,8 +240,8 @@ export function CustomersPage() {
                   {list?.items.map((c) => (
                     <tr
                       key={c.id}
+                      className="row-link"
                       onClick={() => void openCustomer(c)}
-                      style={{ cursor: "pointer" }}
                     >
                       <td className="strong mono">{c.cpf_masked}</td>
                       <td className="muted mono">{c.phone_masked ?? "—"}</td>
@@ -241,7 +249,9 @@ export function CustomersPage() {
                         {formatPoints(c.balance)}
                       </td>
                       <td className="muted">{formatDate(c.created_at)}</td>
-                      <td className="right muted">›</td>
+                      <td className="right muted">
+                        <IconChevronRight size={16} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -249,17 +259,15 @@ export function CustomersPage() {
             </div>
 
             {(hasPrev || hasNext) && (
-              <div
-                className="row-between"
-                style={{ padding: "12px 16px", gap: 12 }}
-              >
+<div className="row-between pager">
                 <Button
                   variant="ghost"
                   size="sm"
                   disabled={!hasPrev}
+                  icon={<IconArrowLeft size={14} />}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                 >
-                  ← Anteriores
+                  Anteriores
                 </Button>
                 <span className="subtle">página {page}</span>
                 <Button
@@ -268,7 +276,8 @@ export function CustomersPage() {
                   disabled={!hasNext}
                   onClick={() => setPage((p) => p + 1)}
                 >
-                  Próximos →
+                  Próximos
+                  <IconArrowRight size={14} />
                 </Button>
               </div>
             )}
@@ -284,20 +293,18 @@ function CustomerDetail({ data }: { data: Loaded }) {
   return (
     <div className="stack">
       {/* Cabeçalho do cliente */}
-      <div className="card card-pad">
-        <div className="row-between" style={{ alignItems: "flex-start" }}>
+      <div className="card card-pad customer-hero">
+        <div className="customer-hero-row">
           <div>
-            <div className="subtle">CPF</div>
-            <div className="strong mono" style={{ fontSize: 16 }}>
-              {customer.cpf_masked}
-            </div>
-            <div className="muted" style={{ marginTop: 8 }}>
+            <div className="eyebrow">CPF</div>
+            <div className="customer-cpf mono">{customer.cpf_masked}</div>
+            <div className="muted mt-2">
               Telefone: {customer.phone_masked ?? "—"} · Cadastro:{" "}
               {formatDate(customer.created_at)}
             </div>
           </div>
-          <div className="right">
-            <div className="subtle">Saldo atual</div>
+          <div className="balance-box">
+            <div className="eyebrow">Saldo atual</div>
             <div className="balance-hero">
               <span className="value">{formatPoints(customer.balance)}</span>
               <span className="muted">pontos</span>

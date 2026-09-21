@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { ApiError, login } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { Button, Field, TextInput } from "../components/ui";
+import { Banner, Button, Field, TextInput } from "../components/ui";
 
 export function LoginPage() {
   const { token, signIn } = useAuth();
@@ -38,51 +38,60 @@ export function LoginPage() {
 
   return (
     <div className="login-shell">
-      <div className="login-card card card-pad">
-        <div className="login-head">
-          <div className="brand">
-            <div className="brand-mark">BS</div>
-            <div>
-              <div className="brand-name">Base Sports</div>
-              <div className="brand-sub">Fidelidade</div>
-            </div>
+      <section className="login-hero" aria-hidden>
+        <svg className="login-speed" viewBox="0 0 400 120" preserveAspectRatio="none">
+          <path d="M0 30 H300" />
+          <path d="M40 58 H340" />
+          <path d="M100 86 H320" />
+        </svg>
+        <img className="login-logo" src="/logo-dark.png" alt="" />
+        <p className="login-tagline">
+          Cada compra vira ponto.
+          <br />
+          <span>Cada ponto vira desconto.</span>
+        </p>
+      </section>
+
+      <section className="login-panel">
+        <div className="login-card">
+          <div className="login-head">
+            <span className="eyebrow">Fidelidade Base Sports</span>
+            <h1>Painel administrativo</h1>
+            <p className="muted">Entre com seu usuário e senha.</p>
           </div>
-          <h1>Painel administrativo</h1>
-          <p className="muted">Entre com seu usuário e senha.</p>
+
+          <form onSubmit={onSubmit}>
+            <Field label="Usuário">
+              <TextInput
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                autoFocus
+                autoComplete="username"
+                required
+              />
+            </Field>
+            <Field label="Senha">
+              <TextInput
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </Field>
+
+            {error && (
+              <div className="mb-4">
+                <Banner tone="warn">{error}</Banner>
+              </div>
+            )}
+
+            <Button type="submit" block loading={loading}>
+              Entrar
+            </Button>
+          </form>
         </div>
-
-        <form onSubmit={onSubmit}>
-          <Field label="Usuário">
-            <TextInput
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoFocus
-              autoComplete="username"
-              required
-            />
-          </Field>
-          <Field label="Senha">
-            <TextInput
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              required
-            />
-          </Field>
-
-          {error && (
-            <div className="banner banner-warn" style={{ marginBottom: 16 }}>
-              <span className="banner-icon">!</span>
-              <div>{error}</div>
-            </div>
-          )}
-
-          <Button type="submit" block loading={loading}>
-            Entrar
-          </Button>
-        </form>
-      </div>
+      </section>
     </div>
   );
 }
